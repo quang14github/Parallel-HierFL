@@ -10,17 +10,18 @@ import torch
 from models.initialize_model import initialize_model
 import copy
 
-class Client():
+
+class Client:
 
     def __init__(self, id, train_loader, test_loader, args, device):
         self.id = id
         self.train_loader = train_loader
         self.test_loader = test_loader
-        self.model = initialize_model(args, device)
+        self.model = initialize_model(args)
         # copy.deepcopy(self.model.shared_layers.state_dict())
         self.receiver_buffer = {}
         self.batch_size = args.batch_size
-        #record local update epoch
+        # record local update epoch
         self.epoch = 0
         # record the time
         self.clock = []
@@ -35,8 +36,9 @@ class Client():
                 inputs, labels = data
                 inputs = Variable(inputs).to(device)
                 labels = Variable(labels).to(device)
-                loss += self.model.optimize_model(input_batch=inputs,
-                                                  label_batch=labels)
+                loss += self.model.optimize_model(
+                    input_batch=inputs, label_batch=labels
+                )
                 itered_num += 1
                 if itered_num >= num_iter:
                     end = True
@@ -45,9 +47,10 @@ class Client():
                     self.model.exp_lr_sheduler(epoch=self.epoch)
                     # self.model.print_current_lr()
                     break
-            if end: break
+            if end:
+                break
             self.epoch += 1
-            self.model.exp_lr_sheduler(epoch = self.epoch)
+            self.model.exp_lr_sheduler(epoch=self.epoch)
             # self.model.print_current_lr()
         # print(itered_num)
         # print(f'The {self.epoch}')
@@ -62,16 +65,17 @@ class Client():
                 inputs, labels = data
                 inputs = inputs.to(device)
                 labels = labels.to(device)
-                outputs = self.model.test_model(input_batch= inputs)
+                outputs = self.model.test_model(input_batch=inputs)
                 _, predict = torch.max(outputs, 1)
                 total += labels.size(0)
                 correct += (predict == labels).sum().item()
         return correct, total
 
     def send_to_edgeserver(self, edgeserver):
-        edgeserver.receive_from_client(client_id= self.id,
-                                        cshared_state_dict = copy.deepcopy(self.model.shared_layers.state_dict())
-                                        )
+        edgeserver.receive_from_client(
+            client_id=self.id,
+            cshared_state_dict=copy.deepcopy(self.model.shared_layers.state_dict()),
+        )
         return None
 
     def receive_from_edgeserver(self, shared_state_dict):
@@ -86,4 +90,3 @@ class Client():
         # self.model.shared_layers.load_state_dict(self.receiver_buffer)
         self.model.update_model(self.receiver_buffer)
         return None
-
