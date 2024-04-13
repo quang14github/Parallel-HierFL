@@ -1,95 +1,248 @@
+from options import args_parser
 import socket
 import threading
-import socket
-import threading
-import argparse
 import torch
 import io
 import struct
+from average import average_weights
+import pickle
+
+default_socket_volumn = 1048576
 
 
 class Edge:
-    def __init__(self, server_host="127.0.0.1", server_port=40000, edge_port=40001):
+    def __init__(self, args, server_host="127.0.0.1", server_port=40000):
         # connect server
-        self.edge = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        self.edge.connect((server_host, server_port))
+        self.edge_server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.edge_server.connect((server_host, server_port))
         # config edge ip and port and listen to the clients
         self.edge_client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        self.edge_client.bind(("127.0.0.1", edge_port))
+        self.edge_client.bind(("127.0.0.1", args.edge_port))
         self.edge_client.listen()
         #  config training
         # self.cids = cids
+        self.start_training = False
         self.receiver_buffer = {}
         self.shared_state_dict = {}
         self.id_registration = []
         self.sample_registration = {}
         self.all_trainsample_num = 0
+        self.total_sample = 0
+        self.edge_loss = 0.0
+        self.aggregated_loss = [0.0 for i in range(args.num_edge_aggregation)]
         self.clock = []
 
-    def handle_client(self, conn, addr):
+        self.num_edge_aggregation = 0
+        self.num_global_aggregation = 0
+
+        self.received_clients = {}
+
+        self.client_conns = {}
+
+    def handle_client(self, condition, conn, addr):
         print(f"New client {addr} connected.")
         client_id = 0
-        # self.client_register(addr)
-        # self.all_trainsample_num += self.sample_registration[addr]
         while True:
-            msg == conn.recv(1024).decode("utf-8")
-            if msg != "":
-                client_id = int(msg)
-                self.id_registration.append(client_id)
+            msg = conn.recv(1024).decode("utf-8")
+            if msg == "DISCONNECT" or msg == "":
+                print(f"{addr} disconnected.")
                 break
+            if msg != "":
+                client_id = int(msg.split(" ")[0])
+                client_trainsample_num = int(msg.split(" ")[1])
+                print(f"Client {client_id} connected.")
+                self.client_register(conn, client_id, client_trainsample_num)
+                break
+        with condition:
+            condition.wait()
+        self.send_msg_to_client(client_id, "start")
         while True:
-            # msg = conn.recv(1024)
-            # try:
-            #     decoded_msg = msg.decode("utf-8")
-            #     if decoded_msg == "DISCONNECT" or decoded_msg == "":
-            #         print(f"Client {addr} disconnected.")
-            #         break
+            with condition:
+                condition.wait()
+            if self.start_training == False:
+                break
+            self.receive_data_from_client(client_id, conn)
+            print(f"Received data from client {client_id}.")
 
-            # except:
-            #     print("Received message is not utf-8 encoded.")
+        print(f"Client {client_id} disconnected.")
+        conn.close()
+
+    def send_msg_to_client(self, client_id, msg):
+        self.client_conns[client_id].send(msg.encode("utf-8"))
+
+    def send_msg_to_server(self, msg):
+        self.edge_server.send(msg.encode("utf-8"))
+
+    def receive_msg_from_server(self):
+        return self.edge_server.recv(1024).decode("utf-8")
+
+    def client_register(self, conn, client_id, client_trainsample_num):
+        self.received_clients[client_id] = 0
+        self.client_conns[client_id] = conn
+        self.id_registration.append(client_id)
+        self.sample_registration[client_id] = client_trainsample_num
+        self.all_trainsample_num += client_trainsample_num
+        return None
+
+    def send_data_to_client(self, client_id, conn):
+        # Serialize the state_dict to a byte stream
+        buffer = io.BytesIO()
+        torch.save(self.shared_state_dict, buffer)
+
+        # Get the byte stream from the buffer
+        state_dict_bytes = buffer.getvalue()
+
+        # Send the size of the state_dict_bytes before sending state_dict_bytes
+        size = len(state_dict_bytes)
+        conn.sendall(struct.pack("!I", size))
+        conn.sendall(state_dict_bytes)
+        return None
+
+    def receive_data_from_client(self, client_id, conn):
+        while True:
             try:
                 size = struct.unpack("!I", conn.recv(4))[0]
                 state_dict_bytes = b""
+                client_loss = 0.0
                 while len(state_dict_bytes) < size:
-                    state_dict_bytes += conn.recv(1024)
+                    msg = conn.recv(default_socket_volumn)
+                    if len(msg) + len(state_dict_bytes) > size:
+                        client_loss = float(
+                            msg[size - len(state_dict_bytes) :].decode("utf-8")
+                        )
+                        state_dict_bytes += msg[: size - len(state_dict_bytes)]
+                        break
+                    else:
+                        state_dict_bytes += msg
                     # Load the state_dict from the byte stream
                 buffer = io.BytesIO(state_dict_bytes)
                 shared_state_dict = torch.load(buffer)
-                self.receive_from_client(client_id, shared_state_dict)
+                self.receiver_buffer[client_id] = shared_state_dict
+                print(f"Received loss from client {client_id}: {client_loss}")
+                self.edge_loss += (
+                    client_loss * self.sample_registration[client_id]
+                ) / self.total_sample
+                self.received_clients[client_id] = 1
                 break
             except:
                 pass
-            # Store the received state_dict in the receiver_buffer
-            # self.receiver_buffer = shared_state_dict
-            # print(f"New message from {addr}")
-
-            # self.edge.send(msg.encode("utf-8"))  # Forward message to server
-        conn.close()
-
-    def receive_from_client(self, client_id, cshared_state_dict):
-        self.receiver_buffer[client_id] = cshared_state_dict
         return None
 
-    def send_msg(self, msg):
-        self.edge.send(msg.encode("utf-8"))
+    def close_client_conn(self, client_id):
+        self.client_conns[client_id].close()
+        return None
+
+    def send_data_to_server(self):
+        # Serialize the state_dict to a byte stream
+        buffer = io.BytesIO()
+        torch.save(self.shared_state_dict, buffer)
+
+        # Get the byte stream from the buffer
+        state_dict_bytes = buffer.getvalue()
+
+        # Send the size of the state_dict_bytes before sending state_dict_bytes
+        size = len(state_dict_bytes)
+
+        aggregated_loss_bytes = pickle.dumps(self.aggregated_loss)
+        aggregated_loss_size = len(aggregated_loss_bytes)
+
+        self.edge_server.sendall(struct.pack("!I", size))
+        self.edge_server.sendall(struct.pack("!I", aggregated_loss_size))
+        self.edge_server.sendall(state_dict_bytes)
+        self.edge_server.sendall(aggregated_loss_bytes)
+        return None
+
+    def receive_data_from_server(self):
+        while True:
+            try:
+                size = struct.unpack("!I", self.edge_server.recv(4))[0]
+                state_dict_bytes = b""
+                while len(state_dict_bytes) < size:
+                    state_dict_bytes += self.edge_server.recv(default_socket_volumn)
+                    # Load the state_dict from the byte stream
+                buffer = io.BytesIO(state_dict_bytes)
+                shared_state_dict = torch.load(buffer)
+                self.shared_state_dict = shared_state_dict
+                break
+            except:
+                pass
+        return None
+
+    def refresh_edgeserver(self):
+        self.receiver_buffer.clear()
+        for i in self.received_clients.keys():
+            self.received_clients[i] = 0
+        # del self.id_registration[:]
+        # self.sample_registration.clear()
+        return None
+
+    def aggregate(self, args):
+        """
+        Using the old aggregation funciton
+        :param args:
+        :return:
+        """
+        received_dict = [dict for dict in self.receiver_buffer.values()]
+        sample_num = [snum for snum in self.sample_registration.values()]
+        self.shared_state_dict = average_weights(w=received_dict, s_num=sample_num)
 
     def start(self):
+        condition = threading.Condition()
         print("Edge Started. Waiting for clients...")
-        while True:
-            if len(self.id_registration) == 1:
-                break
+        while threading.active_count() - 1 < args.num_clients / args.num_edges:
             conn, addr = self.edge_client.accept()
-            thread = threading.Thread(target=self.handle_client, args=(conn, addr))
+            thread = threading.Thread(
+                target=self.handle_client, args=(condition, conn, addr)
+            )
             thread.start()
+        print("All clients connected.")
+        while True:
+            msg = self.receive_msg_from_server()
+            if msg.split(" ")[0] == "start":
+                self.start_training = True
+                self.total_sample = int(msg.split(" ")[1])
+                print("Start training.")
+                with condition:
+                    condition.wait(timeout=10)
+                    condition.notify_all()
+                break
+        with condition:
+            condition.wait(timeout=10)
+        for num_comm in range(args.num_communication):
+            print("Waiting for data from server.")
+            self.receive_data_from_server()
+            print("Received data from server.")
+            for num_edgeagg in range(args.num_edge_aggregation):
+                self.edge_loss = 0.0
+                print("Start sending data to clients.")
+                for client_id in self.id_registration:
+                    self.send_data_to_client(client_id, self.client_conns[client_id])
+                    print(f"Sended data to client {client_id}.")
+                print("start receiving data from clients.")
+                with condition:
+                    condition.notify_all()
+                while sum(self.received_clients.values()) < len(self.id_registration):
+                    pass
+                print("Received data from all clients.")
+                self.aggregated_loss[num_edgeagg] = self.edge_loss
+                self.aggregate(args)
+                print("Aggregated.")
+                self.refresh_edgeserver()
+            print("Start sending data to server.")
+            self.send_data_to_server()
+            print("Sended data to server.")
+            print()
+
+        self.start_training = False
+        with condition:
+            condition.notify_all()
+        print("Training finished.")
+        self.edge_client.close()
+        self.edge_server.close()
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
-    parser.add_argument(
-        "--edge_port", type=int, default=40001, help="Port number for the edge"
-    )
-    args = parser.parse_args()
-
-    cluster_edge = Edge(edge_port=args.edge_port)
-    cluster_edge.send_msg("edge")
+    args = args_parser()
+    cluster_edge = Edge(args)
+    cluster_edge.send_msg_to_server(f"edge {args.edge_port}")
     cluster_edge.start()
