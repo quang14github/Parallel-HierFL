@@ -1,6 +1,10 @@
 import argparse
 import torch
 
+num_communication = 50
+num_edge_aggregation = 10
+num_local_update = 6
+
 
 def args_parser():
     parser = argparse.ArgumentParser()
@@ -8,14 +12,14 @@ def args_parser():
     parser.add_argument(
         "--dataset",
         type=str,
-        default="mnist",
+        default="cifar10",
         help="name of the dataset: mnist, cifar10",
     )
     parser.add_argument(
         "--model",
         type=str,
-        default="lenet",
-        help="name of model. mnist: logistic, lenet; cifar10: cnn_tutorial, cnn_complex",
+        default="cnn_complex",
+        help="name of model. mnist: logistic, lenet; cifar10: resnet18, cnn_complex",
     )
     parser.add_argument(
         "--input_channels",
@@ -28,21 +32,24 @@ def args_parser():
     )
     # nn training hyper parameter
     parser.add_argument(
-        "--batch_size", type=int, default=10, help="batch size when trained on client"
+        "--batch_size", type=int, default=20, help="batch size when trained on client"
     )
     parser.add_argument(
         "--num_communication",
         type=int,
-        default=1,
+        default=num_communication,
         help="number of communication rounds with the cloud server",
     )
     parser.add_argument(
-        "--num_local_update", type=int, default=1, help="number of local update (tau_1)"
+        "--num_local_update",
+        type=int,
+        default=num_local_update,
+        help="number of local update (tau_1)",
     )
     parser.add_argument(
         "--num_edge_aggregation",
         type=int,
-        default=1,
+        default=num_edge_aggregation,
         help="number of edge aggregation (tau_2)",
     )
     parser.add_argument(
@@ -51,7 +58,7 @@ def args_parser():
         default=0.001,
         help="learning rate of the SGD when trained on client",
     )
-    parser.add_argument("--lr_decay", type=float, default="1", help="lr decay rate")
+    parser.add_argument("--lr_decay", type=float, default=0.995, help="lr decay rate")
     parser.add_argument("--lr_decay_epoch", type=int, default=1, help="lr decay epoch")
     parser.add_argument("--momentum", type=float, default=0, help="SGD momentum")
     parser.add_argument(
@@ -70,14 +77,14 @@ def args_parser():
     parser.add_argument(
         "--edgeiid",
         type=int,
-        default=0,
+        default=1,
         help="distribution of the data under edges, 1 (edgeiid),0 (edgeniid) (used only when iid = -2)",
     )
     parser.add_argument(
         "--frac", type=float, default=1, help="fraction of participated clients"
     )
     parser.add_argument(
-        "--num_clients", type=int, default=2, help="number of all available clients"
+        "--num_clients", type=int, default=4, help="number of all available clients"
     )
     parser.add_argument("--num_edges", type=int, default=2, help="number of edges")
     parser.add_argument("--seed", type=int, default=1, help="random seed (defaul: 1)")
@@ -101,7 +108,11 @@ def args_parser():
     parser.add_argument("--global_model", default=1, type=int)
     parser.add_argument("--local_model", default=0, type=int)
 
-    parser.add_argument("--client_id", default=0, type=int)
+    parser.add_argument(
+        "--device", default="cpu", help="training hardware to be selected", type=str
+    )
+    parser.add_argument("--edge_port", default=40001, help="edge port number", type=int)
+
     args = parser.parse_args()
     args.cuda = torch.cuda.is_available()
     return args
