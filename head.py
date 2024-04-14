@@ -26,17 +26,16 @@ class Edge:
         self.shared_state_dict = {}
         self.id_registration = []
         self.sample_registration = {}
-        self.all_trainsample_num = 0
+        self.edge_trainsample_num = 0
         self.total_sample = 0
-        self.edge_loss = 0.0
-        self.aggregated_loss = [0.0 for i in range(args.num_edge_aggregation)]
+        self.loss = 0.0
+        self.correct = 0.0
+        self.total = 0.0
+        self.aggregated_metrics = [
+            (0.0, 0.0, 0.0) for i in range(args.num_edge_aggregation)
+        ]
         self.clock = []
-
-        self.num_edge_aggregation = 0
-        self.num_global_aggregation = 0
-
         self.received_clients = {}
-
         self.client_conns = {}
 
     def handle_client(self, condition, conn, addr):
@@ -81,7 +80,7 @@ class Edge:
         self.client_conns[client_id] = conn
         self.id_registration.append(client_id)
         self.sample_registration[client_id] = client_trainsample_num
-        self.all_trainsample_num += client_trainsample_num
+        self.edge_trainsample_num += client_trainsample_num
         return None
 
     def send_data_to_client(self, client_id, conn):
@@ -101,27 +100,35 @@ class Edge:
     def receive_data_from_client(self, client_id, conn):
         while True:
             try:
-                size = struct.unpack("!I", conn.recv(4))[0]
+                # Receive the size of the state_dict_bytes before receiving state_dict_bytes
+                state_dict_size = struct.unpack("!I", conn.recv(4))[0]
                 state_dict_bytes = b""
-                client_loss = 0.0
-                while len(state_dict_bytes) < size:
-                    msg = conn.recv(default_socket_volumn)
-                    if len(msg) + len(state_dict_bytes) > size:
-                        client_loss = float(
-                            msg[size - len(state_dict_bytes) :].decode("utf-8")
+                while len(state_dict_bytes) < state_dict_size:
+                    msg = conn.recv(
+                        min(
+                            default_socket_volumn,
+                            state_dict_size - len(state_dict_bytes),
                         )
-                        state_dict_bytes += msg[: size - len(state_dict_bytes)]
-                        break
-                    else:
-                        state_dict_bytes += msg
-                    # Load the state_dict from the byte stream
+                    )
+                    state_dict_bytes += msg
+                # Load the state_dict from the byte stream
                 buffer = io.BytesIO(state_dict_bytes)
                 shared_state_dict = torch.load(buffer)
+                # Store the state_dict in the receiver_buffer
                 self.receiver_buffer[client_id] = shared_state_dict
-                print(f"Received loss from client {client_id}: {client_loss}")
-                self.edge_loss += (
+                print(f"Received state_dict from client {client_id}")
+                # Receive the loss, correct and total from the client
+                client_loss, client_correct, client_total = map(
+                    float, conn.recv(1024).decode("utf-8").split(" ")
+                )
+                print(
+                    f"Received metrics from client {client_id}: loss {client_loss} {client_correct} {client_total}."
+                )
+                self.loss += (
                     client_loss * self.sample_registration[client_id]
                 ) / self.total_sample
+                self.correct += client_correct
+                self.total += client_total
                 self.received_clients[client_id] = 1
                 break
             except:
@@ -143,13 +150,13 @@ class Edge:
         # Send the size of the state_dict_bytes before sending state_dict_bytes
         size = len(state_dict_bytes)
 
-        aggregated_loss_bytes = pickle.dumps(self.aggregated_loss)
-        aggregated_loss_size = len(aggregated_loss_bytes)
+        aggregated_metrics_bytes = pickle.dumps(self.aggregated_metrics)
+        aggregated_metrics_size = len(aggregated_metrics_bytes)
 
         self.edge_server.sendall(struct.pack("!I", size))
-        self.edge_server.sendall(struct.pack("!I", aggregated_loss_size))
         self.edge_server.sendall(state_dict_bytes)
-        self.edge_server.sendall(aggregated_loss_bytes)
+        self.edge_server.sendall(struct.pack("!I", aggregated_metrics_size))
+        self.edge_server.sendall(aggregated_metrics_bytes)
         return None
 
     def receive_data_from_server(self):
@@ -213,7 +220,9 @@ class Edge:
             self.receive_data_from_server()
             print("Received data from server.")
             for num_edgeagg in range(args.num_edge_aggregation):
-                self.edge_loss = 0.0
+                self.loss = 0.0
+                self.correct = 0.0
+                self.total = 0.0
                 print("Start sending data to clients.")
                 for client_id in self.id_registration:
                     self.send_data_to_client(client_id, self.client_conns[client_id])
@@ -224,14 +233,21 @@ class Edge:
                 while sum(self.received_clients.values()) < len(self.id_registration):
                     pass
                 print("Received data from all clients.")
-                self.aggregated_loss[num_edgeagg] = self.edge_loss
+                print(self.loss, self.correct, self.total)
+                self.aggregated_metrics[num_edgeagg] = (
+                    self.loss,
+                    self.correct,
+                    self.total,
+                )
                 self.aggregate(args)
                 print("Aggregated.")
                 self.refresh_edgeserver()
             print("Start sending data to server.")
             self.send_data_to_server()
+            self.aggregated_metrics = [
+                (0.0, 0.0, 0.0) for i in range(args.num_edge_aggregation)
+            ]
             print("Sended data to server.")
-            print()
 
         self.start_training = False
         with condition:

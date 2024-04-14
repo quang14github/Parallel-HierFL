@@ -21,8 +21,6 @@ class Client:
         self.test_loader = {}
         self.device = args.device
         self.model = initialize_model(args)
-        self.start_training = False
-        self.client_loss = 0.0
         # copy.deepcopy(self.model.shared_layers.state_dict())
         self.receiver_buffer = {}
         self.batch_size = args.batch_size
@@ -89,7 +87,7 @@ class Client:
         self.client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.client_socket.connect((host, edge_port))
 
-    def send_data_to_edge(self):
+    def send_data_to_edge(self, loss, correct, total):
         # Serialize the state_dict to a byte stream
         buffer = io.BytesIO()
         torch.save(self.model.shared_layers.state_dict(), buffer)
@@ -98,10 +96,14 @@ class Client:
         state_dict_bytes = buffer.getvalue()
 
         # Send the size of the state_dict_bytes before sending state_dict_bytes
-        size = len(state_dict_bytes)
-        self.client_socket.sendall(struct.pack("!I", size))
+        state_dict_size = len(state_dict_bytes)
+        self.client_socket.sendall(struct.pack("!I", state_dict_size))
         self.client_socket.sendall(state_dict_bytes)
-        self.client_socket.sendall(str(self.client_loss).encode("utf-8"))
+
+        # Send the loss, correct and total to the edge
+        self.client_socket.sendall(
+            f"{str(loss)} {str(correct)} {str(total)}".encode("utf-8")
+        )
         return None
 
     def sync_with_edge(self):
@@ -146,6 +148,7 @@ class Client:
 def main():
     args = args_parser()
     client = Client(args)
+    # register the client to the server and get the assigned edge's port
     while True:
         # send message to the server to register the client
         client.send_msg("client")
@@ -159,27 +162,24 @@ def main():
             client.connect_to_edge(edge_port)
             client.send_msg(f"{client.id} {len(client.train_loader.dataset)}")
             break
-    waiting = False
+    # wait for the server to start the training
     while True:
-        if client.start_training == False:
-            received_msg = client.receive_msg()
-            if received_msg == "start":
-                client.start_training = True
-                print("start training")
-                break
+        received_msg = client.receive_msg()
+        if received_msg == "start":
+            print("start training")
+            break
+    # training
     for num_comm in range(args.num_communication):
         for num_edgeagg in range(args.num_edge_aggregation):
-            client.client_loss = 0.0
             print("Start receiving data from edge")
             client.receive_data_from_edge()
             print("Received data from edge")
             client.sync_with_edge()
-            client.client_loss = client.local_update(num_iter=args.num_local_update)
-            print(
-                f"Global {num_comm} Edge {num_edgeagg} Client {client.id} loss: {client.client_loss}"
-            )
+            loss = client.local_update(num_iter=args.num_local_update)
+            print("Start testing")
+            correct, total = client.test_model()
             print("Start sending data to edge")
-            client.send_data_to_edge()
+            client.send_data_to_edge(loss=loss, correct=correct, total=total)
             print("Sended data to edge")
 
     print("Training finished")
