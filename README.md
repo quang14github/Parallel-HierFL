@@ -1,24 +1,27 @@
-# Hierarchical_FL
-Implementation of HierFAVG algorithm in [Client-Edge-Cloud Hierarchical Federated Learning](https://arxiv.org/abs/1905.06641) with Pytorch.
+# Parallel-Hierarchical_FL
 
-For running HierFAVG with mnist and lenet:
-```
-python3 hierfavg 
---dataset mnist 
---model lenet 
---num_clients 50 
---num_edges 5 
---frac 1 
---num_local_update 60 
---num_edge_aggregation 1 
---num_communication 100
---batch_size 20 
---iid 0
---edgeiid 1
---show_dis 1
---lr 0.01
---lr_decay 0.995
---lr_decay_epoch 1
---momentum 0
---weight_decay 0
-```
+Implementation of HierFAVG algorithm in [Client-Edge-Cloud Hierarchical Federated Learning](https://arxiv.org/abs/1905.06641) with Pytorch (Parallel programming version).
+
+For running HierFAVG with Cifar10, model CNN on 1 server, 2 edges and 4 clients:
+
+1. Install dependencies
+
+- pip install -r requirements.txt
+
+2. Start training
+
+- Open 7 terminals
+- First terminal: python server.py
+- Second terminal: python head.py --edge_port 40001
+- Third terminal: python head.py --edge_port 40002
+- Terminal number 4,5,6,7: python distributed_client.py
+
+3. Use tensorboard extension to view result in /runs folder
+
+##### You can config the training by modifying the parameters in options.py
+
+##### For example:
+
+- num_communication = 10
+- num_edge_aggregation = 10
+- num_local_update = 6
