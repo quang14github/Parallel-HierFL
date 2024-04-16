@@ -9,6 +9,8 @@ import struct
 import torch
 import io
 import pickle
+from datetime import datetime
+import os
 
 from average import average_weights
 import numpy as np
@@ -194,7 +196,6 @@ class Server:
                 edge_aggregated_metrics = pickle.loads(edge_aggregated_metrics_bytes)
                 self.edge_metrics[edge_id] = edge_aggregated_metrics
                 print(f"Received metrics from edge {edge_id}")
-                print(edge_aggregated_metrics)
                 self.received_egdes[edge_id] = 1
                 break
             except:
@@ -242,7 +243,11 @@ class Server:
             f"bs{args.batch_size}lr{args.lr}lr_decay_rate{args.lr_decay}"
             f"lr_decay_epoch{args.lr_decay_epoch}momentum{args.momentum}"
         )
-        writer = SummaryWriter(comment=FILEOUT)
+        current_time = datetime.now().strftime("%b%d_%H-%M-%S")
+        logdir = os.path.join(
+            "runs", current_time + "_" + socket.gethostname() + FILEOUT
+        )
+        writer = SummaryWriter(logdir=logdir)
         condition = threading.Condition()
         print("Server Started. Waiting for clusters...")
         while True:
@@ -298,6 +303,9 @@ class Server:
                     avg_acc,
                     num_comm * args.num_edge_aggregation + num_edgeagg + 1,
                 )
+                with open(f"./{logdir}/training_results.txt", "a") as f:
+                    f.write(f"{num_comm} {num_edgeagg} {all_loss} {avg_acc}\n")
+
             self.refresh_cloudserver()
             global_nn.load_state_dict(state_dict=copy.deepcopy(self.shared_state_dict))
             global_nn.train(False)
@@ -308,6 +316,8 @@ class Server:
             writer.add_scalar(
                 f"All_Avg_Test_Acc_cloudagg_Vtest", avg_acc_v, num_comm + 1
             )
+            with open(f"./{logdir}/training_results.txt", "a") as f:
+                f.write(f"{num_comm} {avg_acc_v}\n")
 
         self.start_training = False
         with condition:

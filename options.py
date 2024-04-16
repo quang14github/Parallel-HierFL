@@ -1,9 +1,9 @@
 import argparse
 import torch
 
-num_communication = 50
+num_communication = 100
 num_edge_aggregation = 10
-num_local_update = 6
+num_local_update = 60
 
 
 def args_parser():
