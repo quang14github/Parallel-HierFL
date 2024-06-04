@@ -1,7 +1,6 @@
 from options import args_parser
 from tensorboardX import SummaryWriter
-from datasets.get_data import get_dataloaders, show_distribution
-from models.initialize_model import initialize_model
+from datasets.get_data import get_dataloaders
 
 import socket
 import threading
@@ -17,12 +16,11 @@ import numpy as np
 import copy
 
 from tqdm import tqdm
-from models.mnist_cnn import mnist_lenet
+from models.mnist_cnn import Net as MNISTNet
+from models.gquic_cnn import Net as GQUICNet
 from models.cifar_cnn_3conv_layer import cifar_cnn_3conv
-from models.cifar_resnet import ResNet18
-from models.mnist_logistic import LogisticRegression
 
-default_socket_volumn = 1048576
+num_local_update = 10
 
 
 class Server:
@@ -35,7 +33,6 @@ class Server:
         self.server.listen()
         # config training
         self.start_training = False
-        self.model = initialize_model(args)
         self.global_loss = 0.0
         self.receiver_buffer = {}
         self.shared_state_dict = {}
@@ -44,11 +41,11 @@ class Server:
         self.clock = []
         (
             self.train_loaders,
+            self.val_loaders,
             self.test_loaders,
-            self.v_train_loader,
-            self.v_test_loader,
         ) = get_dataloaders(args)
         self.total_sample = sum([len(loader.dataset) for loader in self.train_loaders])
+        self.socket_volumn = args.socket_volumn
         # define the edges
         self.edges = []
         self.edge_conns = {}
@@ -57,6 +54,7 @@ class Server:
         self.edge_metrics = [[] for _ in range(args.num_edges)]
         # define the clients
         self.clients = []
+        self.args = args
 
     def handle_connection(self, condition, conn, addr):
         while True:
@@ -75,12 +73,15 @@ class Server:
                     print(f"New client {addr} connected.")
                     # clustering the clients
                     # send the edge port to the client
-                    if num_clients < 3:
+                    if num_clients < self.args.num_clients // 2 + 1:
                         print(
                             f"Redirect client {addr} to edge with port number {self.edge_ports[0]}"
                         )
                         conn.send(
                             f"{num_clients - 1} {self.edge_ports[0]}".encode("utf-8")
+                        )
+                        self.sample_registration[0] += len(
+                            self.train_loaders[num_clients - 1].dataset
                         )
                     else:
                         print(
@@ -88,6 +89,9 @@ class Server:
                         )
                         conn.send(
                             f"{num_clients - 1} {self.edge_ports[1]}".encode("utf-8")
+                        )
+                        self.sample_registration[1] += len(
+                            self.train_loaders[num_clients - 1].dataset
                         )
                     conn.close()
                     print("Disconnected with client ", addr)
@@ -117,28 +121,29 @@ class Server:
     # training functions
     def initialize_global_nn(self, args):
         if args.dataset == "mnist":
-            if args.model == "lenet":
-                global_nn = mnist_lenet(input_channels=1, output_channels=10)
-            elif args.model == "logistic":
-                global_nn = LogisticRegression(input_dim=1, output_dim=10)
+            if args.model == "mnist_cnn":
+                global_nn = MNISTNet()
             else:
                 raise ValueError(f"Model{args.model} not implemented for mnist")
         elif args.dataset == "cifar10":
-            if args.model == "cnn_complex":
+            if args.model == "cifar10_cnn":
                 global_nn = cifar_cnn_3conv(input_channels=3, output_channels=10)
-            elif args.model == "resnet18":
-                global_nn = ResNet18()
             else:
                 raise ValueError(f"Model{args.model} not implemented for cifar")
+        elif args.dataset == "gquic":
+            if args.model == "gquic_cnn":
+                global_nn = GQUICNet()
+            else:
+                raise ValueError(f"Model{args.model} not implemented for gquic")
         else:
             raise ValueError(f"Dataset {args.dataset} Not implemented")
         return global_nn
 
-    def fast_all_clients_test(self, v_test_loader, global_nn, device):
+    def fast_all_clients_test(self, test_loaders, global_nn, device):
         correct_all = 0.0
         total_all = 0.0
         with torch.no_grad():
-            for data in v_test_loader:
+            for data in test_loaders:
                 inputs, labels = data
                 inputs = inputs.to(device)
                 labels = labels.to(device)
@@ -155,13 +160,7 @@ class Server:
         self.edge_conns[edge_id] = conn
         self.edge_ports.append(edge_listen_port)
         self.id_registration.append(edge_id)
-        edge_all_trainsample_num = sum(
-            [
-                len(self.train_loaders[i].dataset)
-                for i in range(edge_id * 2, (edge_id + 1) * 2)
-            ]
-        )
-        self.sample_registration[edge_id] = edge_all_trainsample_num
+        self.sample_registration[edge_id] = 0
         return None
 
     def receive_data_from_edge(self, edge_id, conn):
@@ -172,7 +171,7 @@ class Server:
                 while len(state_dict_bytes) < state_dict_size:
                     msg = conn.recv(
                         min(
-                            default_socket_volumn,
+                            self.socket_volumn,
                             state_dict_size - len(state_dict_bytes),
                         )
                     )
@@ -187,7 +186,7 @@ class Server:
                 while len(edge_aggregated_metrics_bytes) < edge_aggregated_metrics_size:
                     msg = conn.recv(
                         min(
-                            default_socket_volumn,
+                            self.socket_volumn,
                             edge_aggregated_metrics_size
                             - len(edge_aggregated_metrics_bytes),
                         )
@@ -214,6 +213,7 @@ class Server:
         size = len(state_dict_bytes)
         conn.sendall(struct.pack("!I", size))
         conn.sendall(state_dict_bytes)
+        conn.sendall(str(num_local_update).encode("utf-8"))
         return None
 
     def aggregate(self, args):
@@ -238,10 +238,9 @@ class Server:
     def start(self, args):
         FILEOUT = (
             f"{args.dataset}_clients{args.num_clients}_edges{args.num_edges}_"
-            f"t1-{args.num_local_update}_t2-{args.num_edge_aggregation}"
-            f"_model_{args.model}iid{args.iid}edgeiid{args.edgeiid}epoch{args.num_communication}"
-            f"bs{args.batch_size}lr{args.lr}lr_decay_rate{args.lr_decay}"
-            f"lr_decay_epoch{args.lr_decay_epoch}momentum{args.momentum}"
+            f"t1-{num_local_update}_t2-{args.num_edge_aggregation}"
+            f"_model_{args.model}iid{args.iid}edgeiid{args.edgeiid}round{args.num_communication}"
+            f"bs{args.batch_size}lr{args.lr}"
         )
         current_time = datetime.now().strftime("%b%d_%H-%M-%S")
         logdir = os.path.join(
@@ -267,6 +266,7 @@ class Server:
                     break
         # New an NN model for testing error
         global_nn = self.initialize_global_nn(args)
+        self.shared_state_dict = global_nn.state_dict()
         with condition:
             condition.wait(timeout=5)
         # Start training
@@ -284,46 +284,49 @@ class Server:
             print("All edges have sent their local models.")
             self.aggregate(args)
             print("Aggregation finished.")
+            avg_client_acc = 0.0
             for num_edgeagg in range(args.num_edge_aggregation):
-                all_loss = 0.0
-                correct_all = 0.0
-                total_all = 0.0
+                all_client_loss = 0.0
+                all_client_correct = 0.0
+                all_client_total = 0.0
                 for edge_id in self.id_registration:
-                    all_loss += self.edge_metrics[edge_id][num_edgeagg][0]
-                    correct_all += self.edge_metrics[edge_id][num_edgeagg][1]
-                    total_all += self.edge_metrics[edge_id][num_edgeagg][2]
-                avg_acc = float(correct_all / total_all)
+                    all_client_loss += self.edge_metrics[edge_id][num_edgeagg][0]
+                    all_client_correct += self.edge_metrics[edge_id][num_edgeagg][1]
+                    all_client_total += self.edge_metrics[edge_id][num_edgeagg][2]
+                avg_client_acc = float(all_client_correct / all_client_total)
                 writer.add_scalar(
-                    f"Partial_Avg_Train_loss",
-                    all_loss,
+                    f"Average_Client_Loss",
+                    all_client_loss,
                     num_comm * args.num_edge_aggregation + num_edgeagg + 1,
                 )
                 writer.add_scalar(
-                    f"All_Avg_Test_Acc_edgeagg",
-                    avg_acc,
+                    f"Client-side_Evaluation_Accuracy",
+                    avg_client_acc,
                     num_comm * args.num_edge_aggregation + num_edgeagg + 1,
                 )
                 with open(f"./{logdir}/training_results.txt", "a") as f:
-                    f.write(f"{num_comm} {num_edgeagg} {all_loss} {avg_acc}\n")
+                    f.write(
+                        f"{num_comm} {num_edgeagg} {all_client_loss} {avg_client_acc}\n"
+                    )
 
             self.refresh_cloudserver()
             global_nn.load_state_dict(state_dict=copy.deepcopy(self.shared_state_dict))
             global_nn.train(False)
-            correct_all_v, total_all_v = self.fast_all_clients_test(
-                self.v_test_loader, global_nn, device="cpu"
+            global_correct, global_total = self.fast_all_clients_test(
+                self.test_loaders, global_nn, device="cpu"
             )
-            avg_acc_v = correct_all_v / total_all_v
+            global_acc = global_correct / global_total
             writer.add_scalar(
-                f"All_Avg_Test_Acc_cloudagg_Vtest", avg_acc_v, num_comm + 1
+                f"Server-side_Evaluation_Accuracy", global_acc, num_comm + 1
             )
-            with open(f"./{logdir}/training_results.txt", "a") as f:
-                f.write(f"{num_comm} {avg_acc_v}\n")
+            with open(f"./{logdir}/evaluation_results.txt", "a") as f:
+                f.write(f"{num_comm} {global_acc}\n")
 
         self.start_training = False
         with condition:
             condition.notify_all()
         print("Training finished.")
-        print(f"The final virtual acc is {avg_acc_v}")
+        print(f"The final virtual acc is {global_acc}")
         self.server.close()
         writer.close()
 
@@ -331,8 +334,6 @@ class Server:
 def main():
     args = args_parser()
     server = Server(args)
-    print(server.total_sample)
-    server.shared_state_dict = server.model.shared_layers.state_dict()
     server.start(args)
 
 

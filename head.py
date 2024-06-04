@@ -7,8 +7,6 @@ import struct
 from average import average_weights
 import pickle
 
-default_socket_volumn = 1048576
-
 
 class Edge:
     def __init__(self, args, server_host="127.0.0.1", server_port=40000):
@@ -37,6 +35,8 @@ class Edge:
         self.clock = []
         self.received_clients = {}
         self.client_conns = {}
+        self.num_local_update = 0
+        self.socket_volumn = args.socket_volumn
 
     def handle_client(self, condition, conn, addr):
         print(f"New client {addr} connected.")
@@ -95,6 +95,7 @@ class Edge:
         size = len(state_dict_bytes)
         conn.sendall(struct.pack("!I", size))
         conn.sendall(state_dict_bytes)
+        conn.sendall(str(self.num_local_update).encode("utf-8"))
         return None
 
     def receive_data_from_client(self, client_id, conn):
@@ -106,7 +107,7 @@ class Edge:
                 while len(state_dict_bytes) < state_dict_size:
                     msg = conn.recv(
                         min(
-                            default_socket_volumn,
+                            self.socket_volumn,
                             state_dict_size - len(state_dict_bytes),
                         )
                     )
@@ -162,14 +163,21 @@ class Edge:
     def receive_data_from_server(self):
         while True:
             try:
-                size = struct.unpack("!I", self.edge_server.recv(4))[0]
+                state_dict_size = struct.unpack("!I", self.edge_server.recv(4))[0]
                 state_dict_bytes = b""
-                while len(state_dict_bytes) < size:
-                    state_dict_bytes += self.edge_server.recv(default_socket_volumn)
+                while len(state_dict_bytes) < state_dict_size:
+                    msg = self.edge_server.recv(
+                        min(
+                            self.socket_volumn,
+                            state_dict_size - len(state_dict_bytes),
+                        )
+                    )
+                    state_dict_bytes += msg
                     # Load the state_dict from the byte stream
                 buffer = io.BytesIO(state_dict_bytes)
                 shared_state_dict = torch.load(buffer)
                 self.shared_state_dict = shared_state_dict
+                self.num_local_update = int(self.edge_server.recv(1024).decode("utf-8"))
                 break
             except:
                 pass
@@ -233,7 +241,6 @@ class Edge:
                 while sum(self.received_clients.values()) < len(self.id_registration):
                     pass
                 print("Received data from all clients.")
-                print(self.loss, self.correct, self.total)
                 self.aggregated_metrics[num_edgeagg] = (
                     self.loss,
                     self.correct,
