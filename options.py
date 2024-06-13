@@ -1,7 +1,7 @@
 import argparse
 import torch
 
-num_communication = 10
+num_communication = 100
 num_edge_aggregation = 10
 # num_local_update = 6
 num_clients = 4
@@ -56,7 +56,7 @@ def args_parser():
     parser.add_argument(
         "--lr",
         type=float,
-        default=0.0001,
+        default=0.001,
         help="learning rate of the Adam when trained on client",
     )
     parser.add_argument(

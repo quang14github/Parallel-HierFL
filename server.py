@@ -20,7 +20,7 @@ from models.mnist_cnn import Net as MNISTNet
 from models.gquic_cnn import Net as GQUICNet
 from models.cifar_cnn_3conv_layer import cifar_cnn_3conv
 
-num_local_update = 10
+num_local_update = 6
 
 
 class Server:
@@ -236,6 +236,7 @@ class Server:
         return None
 
     def start(self, args):
+        max_accuracy = 0.0
         FILEOUT = (
             f"{args.dataset}_clients{args.num_clients}_edges{args.num_edges}_"
             f"t1-{num_local_update}_t2-{args.num_edge_aggregation}"
@@ -321,12 +322,13 @@ class Server:
             )
             with open(f"./{logdir}/evaluation_results.txt", "a") as f:
                 f.write(f"{num_comm} {global_acc}\n")
-
+            if global_acc > max_accuracy:
+                max_accuracy = global_acc
         self.start_training = False
         with condition:
             condition.notify_all()
         print("Training finished.")
-        print(f"The final virtual acc is {global_acc}")
+        print(f"The maximum server-side evaluation accuracy is {max_accuracy}")
         self.server.close()
         writer.close()
 
