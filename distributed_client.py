@@ -21,12 +21,9 @@ class Client:
         self.val_loader = []
         self.device = args.device
         self.model = initialize_model(args)
-        # copy.deepcopy(self.model.shared_layers.state_dict())
         self.receiver_buffer = {}
         self.batch_size = args.batch_size
         self.num_local_update = 0
-        # record local update epoch
-        self.epoch = 0
         # record the time
         self.clock = []
         self.socket_volumn = args.socket_volumn
@@ -35,6 +32,7 @@ class Client:
         itered_num = 0
         loss = 0.0
         end = False
+        self.model.shared_layers.train()
         # the upperbound selected in the following is because it is expected that one local update will never reach 1000
         for epoch in range(1000):
             for data in self.train_loader:
@@ -47,34 +45,31 @@ class Client:
                 itered_num += 1
                 if itered_num >= num_iter:
                     end = True
-                    # print(f"Iterer number {itered_num}")
-                    # self.epoch += 1
-                    # self.model.exp_lr_sheduler(epoch=self.epoch)
-                    # self.model.print_current_lr()
                     break
             if end:
                 break
-            # self.epoch += 1
-            # self.model.exp_lr_sheduler(epoch=self.epoch)
-            # self.model.print_current_lr()
-        # print(itered_num)
-        # print(f'The {self.epoch}')
-        loss /= num_iter
+        loss = loss / (num_iter * self.batch_size)
         return loss
 
-    def val_model(self):
+    def val_model(self, val_loader):
         correct = 0.0
         total = 0.0
+        loss = 0.0
+        criterion = torch.nn.CrossEntropyLoss()
+        self.model.shared_layers.eval()
         with torch.no_grad():
-            for data in self.val_loader:
+            for data in val_loader:
                 inputs, labels = data
                 inputs = inputs.to(self.device)
                 labels = labels.to(self.device)
                 outputs = self.model.test_model(input_batch=inputs)
+                loss += criterion(outputs, labels).item()
                 _, predict = torch.max(outputs, 1)
                 total += labels.size(0)
                 correct += (predict == labels).sum().item()
-        return correct, total
+        loss /= total
+        accuracy = correct / total
+        return loss, accuracy
 
     # send normal message
     def send_msg(self, msg):
@@ -89,7 +84,7 @@ class Client:
         self.client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.client_socket.connect((host, edge_port))
 
-    def send_data_to_edge(self, loss, correct, total):
+    def send_data_to_edge(self, test_loss, train_loss, accuracy):
         # Serialize the state_dict to a byte stream
         buffer = io.BytesIO()
         torch.save(self.model.shared_layers.state_dict(), buffer)
@@ -104,7 +99,7 @@ class Client:
 
         # Send the loss, correct and total to the edge
         self.client_socket.sendall(
-            f"{str(loss)} {str(correct)} {str(total)}".encode("utf-8")
+            f"{str(test_loss)} {str(train_loss)} {str(accuracy)}".encode("utf-8")
         )
         return None
 
@@ -172,15 +167,23 @@ class Client:
         # training
         for num_comm in range(args.num_communication):
             for num_edgeagg in range(args.num_edge_aggregation):
+                print(f"Communication round {num_comm} edge aggregation {num_edgeagg}")
                 print("Start receiving data from edge")
                 self.receive_data_from_edge()
                 print("Received data from edge")
                 self.sync_with_edge()
-                loss = self.local_update(num_iter=self.num_local_update)
-                print("Start testing")
-                correct, total = self.val_model()
+                print("Start testing global model")
+                test_loss, _ = self.val_model(val_loader=self.train_loader)
+                print("Start training local model")
+                train_loss = self.local_update(num_iter=self.num_local_update)
+                print("Start validating local model")
+                _, accuracy = self.val_model(val_loader=self.val_loader)
                 print("Start sending data to edge")
-                self.send_data_to_edge(loss=loss, correct=correct, total=total)
+                self.send_data_to_edge(
+                    test_loss=test_loss,
+                    train_loss=train_loss,
+                    accuracy=accuracy,
+                )
                 print("Sended data to edge")
 
         print("Training finished")

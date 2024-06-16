@@ -24,14 +24,11 @@ class Edge:
         self.shared_state_dict = {}
         self.id_registration = []
         self.sample_registration = {}
-        self.edge_trainsample_num = 0
         self.total_sample = 0
-        self.loss = 0.0
-        self.correct = 0.0
-        self.total = 0.0
-        self.aggregated_metrics = [
-            (0.0, 0.0, 0.0) for i in range(args.num_edge_aggregation)
-        ]
+        self.test_losses = {}
+        self.train_losses = {}
+        self.accuracy = 0.0
+        self.aggregated_metrics = []
         self.clock = []
         self.received_clients = {}
         self.client_conns = {}
@@ -80,7 +77,8 @@ class Edge:
         self.client_conns[client_id] = conn
         self.id_registration.append(client_id)
         self.sample_registration[client_id] = client_trainsample_num
-        self.edge_trainsample_num += client_trainsample_num
+        self.test_losses[client_id] = 0.0
+        self.train_losses[client_id] = 0.0
         return None
 
     def send_data_to_client(self, client_id, conn):
@@ -118,18 +116,16 @@ class Edge:
                 # Store the state_dict in the receiver_buffer
                 self.receiver_buffer[client_id] = shared_state_dict
                 print(f"Received state_dict from client {client_id}")
-                # Receive the loss, correct and total from the client
-                client_loss, client_correct, client_total = map(
+                # Receive the test_loss, train_loss, correct and total from the client
+                client_test_loss, client_train_loss, client_accuracy = map(
                     float, conn.recv(1024).decode("utf-8").split(" ")
                 )
                 print(
-                    f"Received metrics from client {client_id}: loss {client_loss} {client_correct} {client_total}."
+                    f"Received metrics from client {client_id}: test_loss {client_test_loss} train_loss {client_train_loss} accuracy {client_accuracy}."
                 )
-                self.loss += (
-                    client_loss * self.sample_registration[client_id]
-                ) / self.total_sample
-                self.correct += client_correct
-                self.total += client_total
+                self.test_losses[client_id] += client_test_loss
+                self.train_losses[client_id] += client_train_loss
+                self.accuracy += client_accuracy
                 self.received_clients[client_id] = 1
                 break
             except:
@@ -224,36 +220,44 @@ class Edge:
         with condition:
             condition.wait(timeout=10)
         for num_comm in range(args.num_communication):
+            print(f"Communication round {num_comm}")
             print("Waiting for data from server.")
             self.receive_data_from_server()
             print("Received data from server.")
             for num_edgeagg in range(args.num_edge_aggregation):
-                self.loss = 0.0
-                self.correct = 0.0
-                self.total = 0.0
+                print(f"Edge aggregation {num_edgeagg}")
                 print("Start sending data to clients.")
                 for client_id in self.id_registration:
                     self.send_data_to_client(client_id, self.client_conns[client_id])
                     print(f"Sended data to client {client_id}.")
-                print("start receiving data from clients.")
+                print("Start receiving data from clients.")
                 with condition:
                     condition.notify_all()
                 while sum(self.received_clients.values()) < len(self.id_registration):
                     pass
                 print("Received data from all clients.")
-                self.aggregated_metrics[num_edgeagg] = (
-                    self.loss,
-                    self.correct,
-                    self.total,
-                )
                 self.aggregate(args)
                 print("Aggregated.")
                 self.refresh_edgeserver()
             print("Start sending data to server.")
+
+            for client_id in self.id_registration:
+                self.aggregated_metrics.append(
+                    self.test_losses[client_id] / args.num_edge_aggregation
+                )
+                self.aggregated_metrics.append(
+                    self.train_losses[client_id] / args.num_edge_aggregation
+                )
+                self.aggregated_metrics.append(self.sample_registration[client_id])
+                self.test_losses[client_id] = 0.0
+                self.train_losses[client_id] = 0.0
+            self.aggregated_metrics.append(
+                self.accuracy / args.num_edge_aggregation / len(self.id_registration)
+            )
             self.send_data_to_server()
-            self.aggregated_metrics = [
-                (0.0, 0.0, 0.0) for i in range(args.num_edge_aggregation)
-            ]
+            # Reset the metrics
+            del self.aggregated_metrics[:]
+            self.accuracy = 0.0
             print("Sended data to server.")
 
         self.start_training = False
