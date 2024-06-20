@@ -203,6 +203,12 @@ if __name__ == "__main__":
     )
     for i in range(args.num_clients):
         train_loader = train_loaders[i]
-        print(len(train_loader.dataset))
-        print(len(val_loaders[i].dataset))
-    print(len(test_loaders.dataset))
+        # calculate distribution of labels in train_loader
+        labels = []
+        for _, label in train_loader:
+            labels.extend(label.tolist())
+        labels = np.array(labels)
+        unique, counts = np.unique(labels, return_counts=True)
+        print(f"Client {i} has {len(train_loader.dataset)} samples")
+        print(dict(zip(unique, counts)))
+        print()

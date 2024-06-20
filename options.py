@@ -1,9 +1,9 @@
 import argparse
 import torch
 
-num_communication = 30
-num_edge_aggregation = 4
-# num_local_update = 6
+num_communication = 100
+num_edge_aggregation = 2
+num_local_update = 15
 num_clients = 4
 
 
@@ -41,12 +41,12 @@ def args_parser():
         default=num_communication,
         help="number of communication rounds with the cloud server",
     )
-    # parser.add_argument(
-    #     "--num_local_update",
-    #     type=int,
-    #     default=num_local_update,
-    #     help="number of local update (tau_1)",
-    # )
+    parser.add_argument(
+        "--num_local_update",
+        type=int,
+        default=num_local_update,
+        help="number of local update (tau_1)",
+    )
     parser.add_argument(
         "--num_edge_aggregation",
         type=int,
@@ -85,7 +85,7 @@ def args_parser():
         help="number of all available clients",
     )
     parser.add_argument("--num_edges", type=int, default=2, help="number of edges")
-    parser.add_argument("--seed", type=int, default=42, help="random seed (defaul: 1)")
+    parser.add_argument("--seed", type=int, default=42, help="random seed (defaul: 42)")
     parser.add_argument(
         "--dataset_root", type=str, default="data", help="dataset root folder"
     )
@@ -119,6 +119,11 @@ def args_parser():
     parser.add_argument("--num_packet", default=20, help="number of packets", type=int)
     parser.add_argument(
         "--num_feature", default=256, help="number of feature", type=int
+    )
+    parser.add_argument("--num_class", default=5, help="number of class", type=int)
+
+    parser.add_argument(
+        "--apply_algorithm", default=0, help="apply algorithm", type=int
     )
 
     args = parser.parse_args()
