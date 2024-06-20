@@ -132,8 +132,8 @@ def initialize_model(args):
                 raise ValueError("Model not implemented for GQUIC")
         else:
             raise ValueError("The dataset is not implemented for mtl yet")
-        if args.cuda:
-            shared_layers = shared_layers.cuda(args.device)
+        if torch.cuda.is_available():
+            shared_layers = shared_layers.cuda(torch.device("cuda"))
     else:
         raise ValueError(
             "Wrong input for the --mtl_model and --global_model, only one is valid"

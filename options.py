@@ -1,7 +1,7 @@
 import argparse
 import torch
 
-num_communication = 100
+num_communication = 300
 num_edge_aggregation = 2
 num_local_update = 15
 num_clients = 4
@@ -98,17 +98,11 @@ def args_parser():
         default=2,
         help="under artificial non-iid distribution, the classes per client",
     )
-    parser.add_argument(
-        "--gpu", type=int, default=0, help="GPU to be selected, 0, 1, 2, 3"
-    )
 
     parser.add_argument("--mtl_model", default=0, type=int)
     parser.add_argument("--global_model", default=1, type=int)
     parser.add_argument("--local_model", default=0, type=int)
 
-    parser.add_argument(
-        "--device", default="cpu", help="training hardware to be selected", type=str
-    )
     parser.add_argument("--edge_port", default=40001, help="edge port number", type=int)
     parser.add_argument(
         "--socket_volumn", default=1048576, help="socket volumn", type=int
@@ -123,9 +117,8 @@ def args_parser():
     parser.add_argument("--num_class", default=5, help="number of class", type=int)
 
     parser.add_argument(
-        "--apply_algorithm", default=0, help="apply algorithm", type=int
+        "--apply_algorithm", default=1, help="apply algorithm", type=int
     )
 
     args = parser.parse_args()
-    args.cuda = torch.cuda.is_available()
     return args

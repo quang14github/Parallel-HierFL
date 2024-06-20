@@ -19,7 +19,7 @@ class Client:
         self.id = None
         self.train_loader = []
         self.val_loader = []
-        self.device = args.device
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.model = initialize_model(args)
         self.receiver_buffer = {}
         self.batch_size = args.batch_size

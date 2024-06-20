@@ -33,6 +33,9 @@ aggregated_accuracies = []
 global_f1 = []
 aggregated_f1 = []
 
+DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+print("Device: ", DEVICE)
+
 
 class Server:
     def __init__(self, args):
@@ -472,7 +475,7 @@ class Server:
             global_nn.load_state_dict(state_dict=copy.deepcopy(self.shared_state_dict))
             global_nn.eval()
             f1_score, global_acc = self.fast_all_clients_test(
-                self.test_loaders, global_nn, device="cpu", num_class=args.num_class
+                self.test_loaders, global_nn, device=DEVICE, num_class=args.num_class
             )
             print("Global f1 score: ", f1_score)
             print("Global accuracy: ", global_acc)
