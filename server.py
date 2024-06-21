@@ -64,7 +64,7 @@ class Server:
         self.pre_action = None
         self.state_dims = 13
         self.action_dims = 3
-        self.alpha = 0.01
+        self.alpha = 0.02
         self.agent = SACAgent(
             state_dims=self.state_dims,
             action_dims=self.action_dims,
