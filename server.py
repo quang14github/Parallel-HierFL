@@ -33,9 +33,6 @@ aggregated_accuracies = []
 global_f1 = []
 aggregated_f1 = []
 
-DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-print("Device: ", DEVICE)
-
 
 class Server:
     def __init__(self, args):
@@ -166,6 +163,8 @@ class Server:
                 raise ValueError(f"Model{args.model} not implemented for gquic")
         else:
             raise ValueError(f"Dataset {args.dataset} Not implemented")
+        if args.cuda:
+            global_nn = global_nn.cuda(torch.device("cuda"))
         return global_nn
 
     def fast_all_clients_test(self, test_loaders, global_nn, device, num_class):
@@ -430,6 +429,8 @@ class Server:
     def start(self, args):
         condition = threading.Condition()
         print("Server Started. Waiting for clusters...")
+        DEVICE = torch.device("cuda" if args.cuda else "cpu")
+        print("Training on device: ", DEVICE)
         while True:
             if self.start_training == False:
                 if threading.active_count() - 1 < (args.num_edges + args.num_clients):

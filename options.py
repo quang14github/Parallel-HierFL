@@ -121,4 +121,5 @@ def args_parser():
     )
 
     args = parser.parse_args()
+    args.cuda = torch.cuda.is_available()
     return args
