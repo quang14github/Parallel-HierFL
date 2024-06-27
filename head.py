@@ -24,7 +24,6 @@ class Edge:
         self.shared_state_dict = {}
         self.id_registration = []
         self.sample_registration = {}
-        self.total_sample = 0
         self.test_losses = {}
         self.train_losses = {}
         self.f1_score = 0.0
@@ -216,9 +215,8 @@ class Edge:
         print("All clients connected.")
         while True:
             msg = self.receive_msg_from_server()
-            if msg.split(" ")[0] == "start":
+            if msg == "start":
                 self.start_training = True
-                self.total_sample = int(msg.split(" ")[1])
                 print("Start training.")
                 with condition:
                     condition.wait(timeout=10)

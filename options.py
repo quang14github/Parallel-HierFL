@@ -1,7 +1,7 @@
 import argparse
 import torch
 
-num_communication = 300
+num_communication = 200
 num_edge_aggregation = 2
 num_local_update = 15
 num_clients = 4
@@ -85,7 +85,7 @@ def args_parser():
         help="number of all available clients",
     )
     parser.add_argument("--num_edges", type=int, default=2, help="number of edges")
-    parser.add_argument("--seed", type=int, default=42, help="random seed (defaul: 42)")
+    parser.add_argument("--seed", type=int, default=39, help="random seed (defaul: 42)")
     parser.add_argument(
         "--dataset_root", type=str, default="data", help="dataset root folder"
     )
@@ -120,6 +120,7 @@ def args_parser():
         "--apply_algorithm", default=1, help="apply algorithm", type=int
     )
 
+    parser.add_argument("--balance", default=0, help="balance", type=int)
     args = parser.parse_args()
     args.cuda = torch.cuda.is_available()
     return args

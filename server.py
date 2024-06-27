@@ -54,7 +54,6 @@ class Server:
             self.val_loaders,
             self.test_loaders,
         ) = get_dataloaders(args)
-        self.total_sample = sum([len(loader.dataset) for loader in self.train_loaders])
         self.socket_volumn = args.socket_volumn
         # Config SAC
         self.num_local_update = args.num_local_update
@@ -96,29 +95,16 @@ class Server:
                 if msg == "client":
                     self.clients.append(addr)
                     num_clients = len(self.clients)
-                    print(f"New client {addr} connected.")
+                    client_id = num_clients - 1
+                    print(f"Client {client_id} connected.")
                     # clustering the clients
                     # send the edge port to the client
                     if num_clients < args.num_clients // 2 + 1:
-                        print(
-                            f"Redirect client {addr} to edge with port number {self.edge_ports[0]}"
-                        )
-                        conn.send(
-                            f"{num_clients - 1} {self.edge_ports[0]}".encode("utf-8")
-                        )
-                        self.sample_registration[0] += len(
-                            self.train_loaders[num_clients - 1].dataset
-                        )
+                        print(f"Redirect client {client_id} to edge 0")
+                        conn.send(f"{client_id} {self.edge_ports[0]}".encode("utf-8"))
                     else:
-                        print(
-                            f"Redirect client {addr} to edge with port number {self.edge_ports[1]}"
-                        )
-                        conn.send(
-                            f"{num_clients - 1} {self.edge_ports[1]}".encode("utf-8")
-                        )
-                        self.sample_registration[1] += len(
-                            self.train_loaders[num_clients - 1].dataset
-                        )
+                        print(f"Redirect client {client_id} to edge 1")
+                        conn.send(f"{client_id} {self.edge_ports[1]}".encode("utf-8"))
                     conn.close()
                     print("Disconnected with client ", addr)
                     with condition:
@@ -128,10 +114,10 @@ class Server:
                     edge_listen_port = int(msg.split(" ")[1])
                     edge_id = len(self.edges)
                     self.edge_register(conn, addr, edge_listen_port)
-                    print(f"New edge {addr} connected.")
+                    print(f"Edge {edge_id} connected.")
                     with condition:
                         condition.wait()
-                    self.send_msg_to_edge(edge_id, f"start {self.total_sample}")
+                    self.send_msg_to_edge(edge_id, f"start")
                     while True:
                         with condition:
                             condition.wait()
@@ -258,6 +244,7 @@ class Server:
                 edge_aggregated_metrics = pickle.loads(edge_aggregated_metrics_bytes)
                 for i in range(args.num_clients // args.num_edges):
                     self.metrics_SAC.append(edge_aggregated_metrics[i])
+                    self.sample_registration[edge_id] += edge_aggregated_metrics[i][2]
                 self.aggregated_f1_score += edge_aggregated_metrics[-2]
                 self.aggregated_accuracy += edge_aggregated_metrics[-1]
                 print(f"Received metrics from edge {edge_id}")
@@ -297,7 +284,7 @@ class Server:
         self.aggregated_f1_score = 0.0
         self.aggregated_accuracy = 0.0
         # del self.id_registration[:]
-        # self.sample_registration.clear()
+        self.sample_registration.clear()
         return None
 
     def close_edge_conn(self, edge_id):
@@ -382,7 +369,7 @@ class Server:
         data_distribution = "iid" if args.iid else "non-iid"
         FILEOUT = (
             f"local-update-{args.num_local_update}_edgeagg-{args.num_edge_aggregation}"
-            f"_{data_distribution}_alpha-{self.alpha}"
+            f"_{data_distribution}_alpha-{self.alpha}_balance-{args.balance}"
         )
 
         output_dir = this_dir / "runs" / algorithm / f"{FILEOUT}_{current_time}"

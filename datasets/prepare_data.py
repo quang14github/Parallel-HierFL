@@ -50,6 +50,7 @@ def get_dataset(dataset_root, dataset, args):
 
 
 def gen_loader(dataset, trainset, testset, args):
+    np.random.seed(args.seed)
     partition_size = int(len(trainset) / args.num_clients)
     lengths = [partition_size] * args.num_clients
     if args.iid:
@@ -57,23 +58,55 @@ def gen_loader(dataset, trainset, testset, args):
             trainset, lengths, torch.Generator().manual_seed(args.seed)
         )
     else:
-        shard_size = int(partition_size / 2)
-        if not isinstance(trainset.targets, torch.Tensor):
-            trainset.targets = torch.tensor(trainset.targets)
-        idxs = trainset.targets.argsort()
-        sorted_data = Subset(trainset, idxs)
-        tmp = []
-        for idx in range(args.num_clients * 2):
-            tmp.append(
-                Subset(sorted_data, np.arange(shard_size * idx, shard_size * (idx + 1)))
+        if args.balance:
+            shard_size = int(partition_size / 2)
+            if not isinstance(trainset.targets, torch.Tensor):
+                trainset.targets = torch.tensor(trainset.targets)
+            idxs = trainset.targets.argsort()
+            sorted_data = Subset(trainset, idxs)
+            tmp = []
+            for idx in range(args.num_clients * 2):
+                tmp.append(
+                    Subset(
+                        sorted_data, np.arange(shard_size * idx, shard_size * (idx + 1))
+                    )
+                )
+            idxs_list = torch.randperm(
+                args.num_clients * 2, generator=torch.Generator().manual_seed(args.seed)
             )
-        idxs_list = torch.randperm(
-            args.num_clients * 2, generator=torch.Generator().manual_seed(args.seed)
-        )
-        datasets = [
-            ConcatDataset((tmp[idxs_list[2 * i]], tmp[idxs_list[2 * i + 1]]))
-            for i in range(args.num_clients)
-        ]
+            datasets = [
+                ConcatDataset((tmp[idxs_list[2 * i]], tmp[idxs_list[2 * i + 1]]))
+                for i in range(args.num_clients)
+            ]
+        else:
+            shard_size = int(partition_size / 4)
+            if not isinstance(trainset.targets, torch.Tensor):
+                trainset.targets = torch.tensor(trainset.targets)
+            idxs = trainset.targets.argsort()
+            sorted_data = Subset(trainset, idxs)
+            tmp = []
+            for idx in range(args.num_clients * 4):
+                tmp.append(
+                    Subset(
+                        sorted_data, np.arange(shard_size * idx, shard_size * (idx + 1))
+                    )
+                )
+            idxs_list = torch.randperm(
+                args.num_clients * 4, generator=torch.Generator().manual_seed(args.seed)
+            ).tolist()
+            datasets = []
+            for i in range(args.num_clients):
+                # get a random number of shards from 1 to 4 for each client, select random shards in the list and remove from the list
+                num_shards = np.random.randint(1, 5)
+                shards = []
+                for _ in range(num_shards):
+                    shard_idx = idxs_list.pop()
+                    shards.append(tmp[shard_idx])
+                datasets.append(ConcatDataset(shards))
+            while len(idxs_list) > 0:
+                idx = idxs_list.pop()
+                rand_client = np.random.randint(0, args.num_clients)
+                datasets[rand_client] = ConcatDataset((datasets[rand_client], tmp[idx]))
     train_loaders = []
     val_loaders = []
     val_ratio = 0.1
@@ -197,7 +230,9 @@ def load_data_set(data, seed, args):
 
 if __name__ == "__main__":
     args = args_parser()
-    train_loaders, val_loaders, test_loaders = get_dataset("data", args.dataset, args)
+    train_loaders, val_loaders, test_loaders = get_dataset(
+        "/Users/robert/dev/AINI/HierFL/datasets", args.dataset, args
+    )
     print(
         f"The dataset is {args.dataset} divided into {args.num_clients} clients/tasks in an iid = {args.iid} way"
     )
@@ -211,4 +246,4 @@ if __name__ == "__main__":
         unique, counts = np.unique(labels, return_counts=True)
         print(f"Client {i} has {len(train_loader.dataset)} samples")
         print(dict(zip(unique, counts)))
-        print()
+    print(sum(len(train_loader.dataset) for train_loader in train_loaders))
