@@ -1,5 +1,4 @@
 from options import args_parser
-from tensorboardX import SummaryWriter
 from datasets.get_data import get_dataloaders
 
 import sys
