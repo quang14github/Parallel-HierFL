@@ -117,7 +117,7 @@ def gen_loader(dataset, trainset, testset, args):
             dataset, lengths, torch.Generator().manual_seed(args.seed)
         )
         train_loaders.append(
-            DataLoader(ds_train, batch_size=args.batch_size, shuffle=True)
+            DataLoader(dataset, batch_size=args.batch_size, shuffle=True)
         )
         val_loaders.append(DataLoader(ds_val, batch_size=args.batch_size))
     test_loaders = DataLoader(testset, batch_size=args.batch_size)
@@ -228,6 +228,8 @@ def load_data_set(data, seed, args):
     return true_set, true_label
 
 
+import matplotlib.pyplot as plt
+
 if __name__ == "__main__":
     args = args_parser()
     train_loaders, val_loaders, test_loaders = get_dataset(
@@ -236,6 +238,25 @@ if __name__ == "__main__":
     print(
         f"The dataset is {args.dataset} divided into {args.num_clients} clients/tasks in an iid = {args.iid} way"
     )
+    client_labels = []
+    # Calculate the distribution of labels in test set
+    labels = []
+    for _, label in test_loaders:
+        labels.extend(label.tolist())
+    labels = np.array(labels)
+    unique, counts = np.unique(labels, return_counts=True)
+    print(f"Test set has {len(test_loaders.dataset)} samples")
+    print(dict(zip(unique, counts)))
+
+    # plot the data distribution of the test set
+    fig, ax = plt.subplots()
+    ax.bar(unique, counts)
+    ax.set_xlabel("Label")
+    ax.set_ylabel("Number of Samples")
+    ax.set_title("Label distribution")
+    plt.savefig("test_label_distribution.png")
+
+    num_classes = {k: 0 for k in range(5)}
     for i in range(args.num_clients):
         train_loader = train_loaders[i]
         # calculate distribution of labels in train_loader
@@ -244,6 +265,53 @@ if __name__ == "__main__":
             labels.extend(label.tolist())
         labels = np.array(labels)
         unique, counts = np.unique(labels, return_counts=True)
+        for k, v in dict(zip(unique, counts)).items():
+            num_classes[k] += v
         print(f"Client {i} has {len(train_loader.dataset)} samples")
-        print(dict(zip(unique, counts)))
-    print(sum(len(train_loader.dataset) for train_loader in train_loaders))
+        client_labels.append(dict(zip(unique, counts)))
+
+    print(sum(num_classes.values()))
+    # plot the distribution of labels in the trainset
+    fig, ax = plt.subplots()
+    ax.bar(num_classes.keys(), num_classes.values())
+    ax.set_xlabel("Label")
+    ax.set_ylabel("Number of Samples")
+    ax.set_title("Label distribution")
+    plt.savefig("train_label_distribution.png")
+
+    # Plot data distribution of clients in a stacked bar diagram
+    fig, ax = plt.subplots()
+    client_names = [f"Client {i}" for i in range(args.num_clients)]
+    labels = list(client_labels[0].keys())
+    # Identify all unique labels across all clients
+    all_labels = set()
+    for client_label in client_labels:
+        all_labels.update(client_label.keys())
+    all_labels = sorted(list(all_labels))  # Sort for consistent ordering
+
+    # Ensure each client has a count for each label
+    uniform_client_labels = []
+    for client_label in client_labels:
+        uniform_label_counts = {
+            label: client_label.get(label, 0) for label in all_labels
+        }
+        uniform_client_labels.append(list(uniform_label_counts.values()))
+
+    # create the data array with uniform shape
+    data = np.array(uniform_client_labels)
+
+    ax.bar(client_names, data[:, 0], label=labels[0])
+    for i in range(1, len(labels)):
+        ax.bar(
+            client_names,
+            data[:, i],
+            bottom=np.sum(data[:, :i], axis=1),
+            label=labels[i],
+        )
+
+    ax.set_xlabel("Clients")
+    ax.set_ylabel("Number of Samples")
+    ax.set_title("Data Distribution of Clients")
+    ax.legend()
+    # save the plot
+    plt.savefig("data_distribution.png")
