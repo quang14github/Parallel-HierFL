@@ -3,9 +3,7 @@ from options import args_parser
 from torch.autograd import Variable
 import torch
 from models.initialize_model import initialize_model
-import copy
 import io
-import argparse
 from datasets.get_data import get_dataloaders
 import struct
 
@@ -24,8 +22,6 @@ class Client:
         self.receiver_buffer = {}
         self.batch_size = args.batch_size
         self.num_local_update = 0
-        # record the time
-        self.clock = []
         self.socket_volumn = args.socket_volumn
 
     def local_update(self, num_iter):
@@ -33,7 +29,6 @@ class Client:
         loss = 0.0
         end = False
         self.model.shared_layers.train()
-        # the upperbound selected in the following is because it is expected that one local update will never reach 1000
         for epoch in range(1000):
             for data in self.train_loader:
                 inputs, labels = data
@@ -134,6 +129,7 @@ class Client:
         self.client_socket.sendall(struct.pack("!I", state_dict_size))
         self.client_socket.sendall(state_dict_bytes)
 
+        # Send the number of local update
         self.client_socket.sendall(
             f"{str(test_loss)} {str(train_loss)} {str(f1_score)} {str(accuracy)}".encode(
                 "utf-8"

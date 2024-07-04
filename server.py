@@ -283,7 +283,8 @@ class Server:
         self.aggregated_f1_score = 0.0
         self.aggregated_accuracy = 0.0
         # del self.id_registration[:]
-        self.sample_registration.clear()
+        for i in self.sample_registration.keys():
+            self.sample_registration[i] = 0
         return None
 
     def close_edge_conn(self, edge_id):
