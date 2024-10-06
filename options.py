@@ -1,10 +1,10 @@
 import argparse
 import torch
 
-num_communication = 200
-num_edge_aggregation = 2
+num_communication = 1000
+num_edge_aggregation = 4
 num_local_update = 15
-num_clients = 4
+num_clients = 6
 
 
 def args_parser():
@@ -14,19 +14,19 @@ def args_parser():
         "--dataset",
         type=str,
         default="gquic",
-        help="name of the dataset: mnist, cifar10, gquic",
+        help="name of the dataset: cifar10, gquic",
     )
     parser.add_argument(
         "--model",
         type=str,
         default="gquic_cnn",
-        help="name of model. gquic: gquic_cnn mnist: mnist_cnn; cifar10: cifar10_cnn",
+        help="name of model. gquic: gquic_cnn; cifar10: cifar10_cnn",
     )
     parser.add_argument(
         "--input_channels",
         type=int,
-        default=1,
-        help="input channels. mnist:1, cifar10 :3",
+        default=3,
+        help="input channels. cifar10 :3",
     )
     parser.add_argument(
         "--output_channels", type=int, default=10, help="output channels"
@@ -67,13 +67,13 @@ def args_parser():
         "--iid",
         type=int,
         default=0,
-        help="distribution of the data, 1,0, -2(one-class)",
+        help="distribution of the data among clients, 0 (non-iid), 1 (iid)",
     )
     parser.add_argument(
-        "--edgeiid",
-        type=int,
-        default=1,
-        help="distribution of the data under edges, 1 (edgeiid),0 (edgeniid) (used only when iid = -2)",
+        "--skewness",
+        type=str,
+        default="label",
+        help="type of data skewness: quantity, label, none",
     )
     parser.add_argument(
         "--frac", type=float, default=1, help="fraction of participated clients"
@@ -84,19 +84,10 @@ def args_parser():
         default=num_clients,
         help="number of all available clients",
     )
-    parser.add_argument("--num_edges", type=int, default=2, help="number of edges")
+    parser.add_argument("--num_edges", type=int, default=3, help="number of edges")
     parser.add_argument("--seed", type=int, default=39, help="random seed (defaul: 42)")
     parser.add_argument(
         "--dataset_root", type=str, default="data", help="dataset root folder"
-    )
-    parser.add_argument(
-        "--show_dis", type=int, default=0, help="whether to show distribution"
-    )
-    parser.add_argument(
-        "--classes_per_client",
-        type=int,
-        default=2,
-        help="under artificial non-iid distribution, the classes per client",
     )
 
     parser.add_argument("--mtl_model", default=0, type=int)
@@ -110,17 +101,20 @@ def args_parser():
 
     # gquic dataset
     parser.add_argument("--byte_number", default="256", help="byte number", type=str)
-    parser.add_argument("--num_packet", default=20, help="number of packets", type=int)
+    parser.add_argument("--num_packets", default=20, help="number of packets", type=int)
     parser.add_argument(
-        "--num_feature", default=256, help="number of feature", type=int
+        "--num_features", default=256, help="number of features", type=int
     )
-    parser.add_argument("--num_class", default=5, help="number of class", type=int)
+    parser.add_argument("--num_classes", default=5, help="number of classes", type=int)
 
     parser.add_argument(
-        "--apply_algorithm", default=1, help="apply algorithm", type=int
+        "--algorithm",
+        default="sac",
+        help="type of drl algorithm: sac, dql_epsilon, dql_ucb1, dql_softmax, ddpg_epsilon, ddpg_ucb1, ppo, none",
+        type=str,
     )
-
-    parser.add_argument("--balance", default=0, help="balance", type=int)
+    parser.add_argument("--alpha", default=0.001, help="alpha", type=float)
+    parser.add_argument("--is_server", default=0, help="is server", type=int)
     args = parser.parse_args()
     args.cuda = torch.cuda.is_available()
     return args

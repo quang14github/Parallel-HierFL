@@ -6,7 +6,7 @@ from models.initialize_model import initialize_model
 import copy
 import io
 import argparse
-from datasets.get_data import get_dataloaders
+from datasets.prepare_data import get_dataset
 import struct
 
 
@@ -51,62 +51,25 @@ class Client:
         loss = loss / (num_iter * self.batch_size)
         return loss
 
-    def val_model(self, val_loader, cal_loss, num_class=5):
+    def val_model(self, loader, num_class=5):
         correct = 0.0
         total = 0.0
         loss = 0.0
-        precision, recall, f1_score = 0.0, 0.0, 0.0
         criterion = torch.nn.CrossEntropyLoss()
-        count_class = [[0, 0, 0] for _ in range(num_class)]
-        actual_classes = set()
         self.model.shared_layers.eval()
         with torch.no_grad():
-            for data in val_loader:
+            for data in loader:
                 inputs, labels = data
                 inputs = inputs.to(self.device)
                 labels = labels.to(self.device)
                 outputs = self.model.test_model(input_batch=inputs)
+                _, predict = torch.max(outputs, 1)
                 total += labels.size(0)
-                if cal_loss == True:
-                    loss += criterion(outputs, labels).item()
-                else:
-                    _, predict = torch.max(outputs, 1)
-                    for class_idx in range(num_class):
-                        if class_idx not in labels and class_idx not in predict:
-                            continue
-                        actual_classes.add(class_idx)
-                        TP, FP, FN = 0, 0, 0
-                        true_class_mask = labels == class_idx
-                        predicted_class_mask = predict == class_idx
-                        # True Positives (TP): Predicted as current class and actually belongs to the current class
-                        TP = torch.sum(predicted_class_mask & true_class_mask).item()
-                        # False Positives (FP): Predicted as current class but actually belongs to a different class
-                        FP = torch.sum(predicted_class_mask & (~true_class_mask)).item()
-                        # False Negatives (FN): Predicted as a different class but actually belongs to the current class
-                        FN = torch.sum((~predicted_class_mask) & true_class_mask).item()
-                        count_class[class_idx][0] += TP
-                        count_class[class_idx][1] += FP
-                        count_class[class_idx][2] += FN
-                    correct += (predict == labels).sum().item()
-        if cal_loss == True:
-            loss /= total
-            return loss
-        else:
-            for i in actual_classes:
-                TP = count_class[i][0]
-                FP = count_class[i][1]
-                FN = count_class[i][2]
-                precision += TP / (TP + FP) if TP + FP != 0 else 0
-                recall += TP / (TP + FN) if TP + FN != 0 else 0
-            precision /= len(actual_classes)
-            recall /= len(actual_classes)
-            f1_score = (
-                2 * precision * recall / (precision + recall)
-                if precision + recall != 0
-                else 0
-            )
-            accuracy = correct / total
-            return f1_score, accuracy
+                loss += criterion(outputs, labels).item()
+                correct += (predict == labels).sum().item()
+        loss /= total
+        accuracy = correct / total
+        return loss, accuracy
 
     # send normal message
     def send_msg(self, msg):
@@ -121,7 +84,7 @@ class Client:
         self.client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.client_socket.connect((host, edge_port))
 
-    def send_data_to_edge(self, test_loss, train_loss, f1_score, accuracy):
+    def send_data_to_edge(self, test_loss, train_loss, accuracy):
         # Serialize the state_dict to a byte stream
         buffer = io.BytesIO()
         torch.save(self.model.shared_layers.state_dict(), buffer)
@@ -135,9 +98,7 @@ class Client:
         self.client_socket.sendall(state_dict_bytes)
 
         self.client_socket.sendall(
-            f"{str(test_loss)} {str(train_loss)} {str(f1_score)} {str(accuracy)}".encode(
-                "utf-8"
-            )
+            f"{str(test_loss)} {str(train_loss)} {str(accuracy)}".encode("utf-8")
         )
         return None
 
@@ -177,7 +138,7 @@ class Client:
         self.send_msg("DISCONNECT")
 
     def build_dataloaders(self, args):
-        (train_loaders, val_loaders, _) = get_dataloaders(args)
+        (train_loaders, val_loaders, _) = get_dataset(args)
         self.train_loader = train_loaders[self.id]
         self.val_loader = val_loaders[self.id]
 
@@ -211,18 +172,15 @@ class Client:
                 print("Received data from edge")
                 self.sync_with_edge()
                 print("Start testing global model")
-                test_loss = self.val_model(val_loader=self.train_loader, cal_loss=True)
+                test_loss, _ = self.val_model(loader=self.train_loader)
                 print("Start training local model")
                 train_loss = self.local_update(num_iter=self.num_local_update)
                 print("Start validating local model")
-                f1_score, accuracy = self.val_model(
-                    val_loader=self.val_loader, cal_loss=False, num_class=args.num_class
-                )
+                _, accuracy = self.val_model(loader=self.val_loader)
                 print("Start sending data to edge")
                 self.send_data_to_edge(
                     test_loss=test_loss,
                     train_loss=train_loss,
-                    f1_score=f1_score,
                     accuracy=accuracy,
                 )
                 print("Sended data to edge")

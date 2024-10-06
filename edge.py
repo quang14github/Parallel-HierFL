@@ -26,7 +26,6 @@ class Edge:
         self.sample_registration = {}
         self.test_losses = {}
         self.train_losses = {}
-        self.f1_score = 0.0
         self.accuracy = 0.0
         self.aggregated_metrics = []
         self.clock = []
@@ -116,22 +115,19 @@ class Edge:
                 # Store the state_dict in the receiver_buffer
                 self.receiver_buffer[client_id] = shared_state_dict
                 print(f"Received state_dict from client {client_id}")
-                # Receive the test_loss, train_loss, TP, FP, FN and accuracy from client
                 (
                     client_test_loss,
                     client_train_loss,
-                    client_f1_score,
                     client_accuracy,
                 ) = map(float, conn.recv(1024).decode("utf-8").split(" "))
                 print(
-                    f"Received metrics from client {client_id}: ",
+                    f"client {client_id}: ",
                     f"test_loss {client_test_loss} train_loss {client_train_loss} ",
-                    f"f1_score {client_f1_score} accuracy {client_accuracy}.",
+                    f"accuracy {client_accuracy}.",
                 )
                 self.test_losses[client_id] += client_test_loss
                 self.train_losses[client_id] += client_train_loss
-                self.f1_score += client_f1_score
-                self.accuracy += client_accuracy
+                self.accuracy += client_accuracy * self.sample_registration[client_id]
                 self.received_clients[client_id] = 1
                 break
             except:
@@ -256,16 +252,10 @@ class Edge:
                 )
                 self.test_losses[client_id] = 0.0
                 self.train_losses[client_id] = 0.0
-            self.aggregated_metrics.append(
-                self.f1_score / args.num_edge_aggregation / len(self.id_registration)
-            )
-            self.aggregated_metrics.append(
-                self.accuracy / args.num_edge_aggregation / len(self.id_registration)
-            )
+            self.aggregated_metrics.append(self.accuracy / args.num_edge_aggregation)
             self.send_data_to_server()
             # Reset the metrics
             del self.aggregated_metrics[:]
-            self.f1_score = 0.0
             self.accuracy = 0.0
             print("Sended data to server.")
 

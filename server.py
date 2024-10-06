@@ -1,6 +1,5 @@
 from options import args_parser
-from datasets.get_data import get_dataloaders
-
+from datasets.prepare_data import get_dataset
 import sys
 import socket
 import threading
@@ -16,25 +15,31 @@ from pathlib import Path
 from average import average_weights
 import numpy as np
 import copy
+import random
+import time
 
 from tqdm import tqdm
 from models.mnist_cnn import Net as MNISTNet
 from models.gquic_cnn import Net as GQUICNet
 from models.cifar_cnn_3conv_layer import cifar_cnn_3conv
 
-from sac.sac import SACAgent
+from algorithms.sac.sac import Agent as SAC_Agent
+from algorithms.dql.dql_epsilon_agent import Agent as DQL_Epsilon_Agent
+from algorithms.dql.dql_softmax_agent import Agent as DQL_Softmax_Agent
+from algorithms.ddpg.ddpg import Agent as DDPG_Agent
+from algorithms.ppo.ppo import Agent as PPO_Agent
+from algorithms.ucb1.ucb1 import UCB1
 
 test_losses = []
 rewards = []
 local_updates = []
 global_accuracies = []
 aggregated_accuracies = []
-global_f1 = []
-aggregated_f1 = []
+start_time = None
 
 
 class Server:
-    def __init__(self, args):
+    def __init__(self, agent, args):
         # config server ip and port
         self.host = "127.0.0.1"
         self.port = 40000
@@ -52,31 +57,30 @@ class Server:
             self.train_loaders,
             self.val_loaders,
             self.test_loaders,
-        ) = get_dataloaders(args)
+        ) = get_dataset(args)
         self.socket_volumn = args.socket_volumn
-        # Config SAC
+        # Config algorithm
         self.num_local_update = args.num_local_update
         self.min_local_update = 1
-        self.max_local_update = 50
+        self.max_local_update = 200
         self.pre_state = None
         self.pre_action = None
-        self.state_dims = 13
-        self.action_dims = 3
-        self.alpha = 0.02
-        self.agent = SACAgent(
-            state_dims=self.state_dims,
-            action_dims=self.action_dims,
-            hidden_dims=64,
-            batch_size=args.batch_size,
-        )
+        self.pre_action_ucb1 = None
+        self.pre_log_prob = None
+        self.epsilon_max = 1
+        self.epsilon_min = 0.1
+        self.epsilon_decay = 0.998
+        self.epsilon = self.epsilon_max
+        self.alpha = args.alpha
+        self.agent = agent
+        self.ucb1 = UCB1(2)
         self.aggregated_accuracy = 0.0
-        self.aggregated_f1_score = 0.0
         # define the edges
         self.edges = []
         self.edge_conns = {}
         self.edge_ports = []
         self.received_egdes = {}
-        self.metrics_SAC = []
+        self.metrics = []
         # define the clients
         self.clients = []
 
@@ -98,12 +102,8 @@ class Server:
                     print(f"Client {client_id} connected.")
                     # clustering the clients
                     # send the edge port to the client
-                    if num_clients < args.num_clients // 2 + 1:
-                        print(f"Redirect client {client_id} to edge 0")
-                        conn.send(f"{client_id} {self.edge_ports[0]}".encode("utf-8"))
-                    else:
-                        print(f"Redirect client {client_id} to edge 1")
-                        conn.send(f"{client_id} {self.edge_ports[1]}".encode("utf-8"))
+                    edge_id = client_id % args.num_edges
+                    conn.send(f"{client_id} {self.edge_ports[edge_id]}".encode("utf-8"))
                     conn.close()
                     print("Disconnected with client ", addr)
                     with condition:
@@ -152,13 +152,9 @@ class Server:
             global_nn = global_nn.cuda(torch.device("cuda"))
         return global_nn
 
-    def fast_all_clients_test(self, test_loaders, global_nn, device, num_class):
+    def fast_all_clients_test(self, test_loaders, global_nn, device):
         correct_all = 0.0
         total_all = 0.0
-        precision = 0.0
-        recall = 0.0
-        count_class = [[0, 0, 0] for _ in range(num_class)]
-        actual_classes = set()
         with torch.no_grad():
             for data in test_loaders:
                 inputs, labels = data
@@ -168,38 +164,8 @@ class Server:
                 _, predicts = torch.max(outputs, 1)
                 total_all += labels.size(0)
                 correct_all += (predicts == labels).sum().item()
-                for class_idx in range(num_class):
-                    if class_idx not in labels and class_idx not in predicts:
-                        continue
-                    actual_classes.add(class_idx)
-                    TP, FP, FN = 0, 0, 0
-                    true_class_mask = labels == class_idx
-                    predicted_class_mask = predicts == class_idx
-                    # True Positives (TP): Predicted as current class and actually belongs to the current class
-                    TP += torch.sum(predicted_class_mask & true_class_mask).item()
-                    # False Positives (FP): Predicted as current class but actually belongs to a different class
-                    FP += torch.sum(predicted_class_mask & (~true_class_mask)).item()
-                    # False Negatives (FN): Predicted as a different class but actually belongs to the current class
-                    FN += torch.sum((~predicted_class_mask) & true_class_mask).item()
-                    count_class[class_idx][0] += TP
-                    count_class[class_idx][1] += FP
-                    count_class[class_idx][2] += FN
-
-        for i in actual_classes:
-            TP = count_class[i][0]
-            FP = count_class[i][1]
-            FN = count_class[i][2]
-            precision += TP / (TP + FP) if TP + FP != 0 else 0
-            recall += TP / (TP + FN) if TP + FN != 0 else 0
-        precision /= len(actual_classes)
-        recall /= len(actual_classes)
-        f1_score = (
-            2 * (precision * recall) / (precision + recall)
-            if precision + recall != 0
-            else 0
-        )
         accuracy = correct_all / total_all
-        return f1_score, accuracy
+        return accuracy
 
     def edge_register(self, conn, addr, edge_listen_port):
         edge_id = len(self.edges)
@@ -241,10 +207,9 @@ class Server:
                     )
                     edge_aggregated_metrics_bytes += msg
                 edge_aggregated_metrics = pickle.loads(edge_aggregated_metrics_bytes)
-                for i in range(args.num_clients // args.num_edges):
-                    self.metrics_SAC.append(edge_aggregated_metrics[i])
+                for i in range(len(edge_aggregated_metrics) - 1):
+                    self.metrics.append(edge_aggregated_metrics[i])
                     self.sample_registration[edge_id] += edge_aggregated_metrics[i][2]
-                self.aggregated_f1_score += edge_aggregated_metrics[-2]
                 self.aggregated_accuracy += edge_aggregated_metrics[-1]
                 print(f"Received metrics from edge {edge_id}")
                 self.received_egdes[edge_id] = 1
@@ -279,54 +244,18 @@ class Server:
         self.receiver_buffer.clear()
         for i in self.received_egdes.keys():
             self.received_egdes[i] = 0
-        self.metrics_SAC = []
-        self.aggregated_f1_score = 0.0
+        self.metrics = []
         self.aggregated_accuracy = 0.0
         # del self.id_registration[:]
-        self.sample_registration.clear()
+        for i in self.sample_registration.keys():
+            self.sample_registration[i] = 0
         return None
 
     def close_edge_conn(self, edge_id):
         self.edge_conns[edge_id].close()
         return None
 
-    def cal_SAC(self, num_edges, apply_algorithm):
-        self.metrics_SAC = np.array(self.metrics_SAC)
-        # calculate test_loss and reward
-        total_example, total_loss = 0, 0
-        for i in self.metrics_SAC:
-            total_example += i[2]
-            total_loss += i[0] * i[2]
-        loss = total_loss / total_example
-        curr_reward = -loss + self.alpha / self.num_local_update
-        rewards.append(curr_reward)
-        test_losses.append(loss)
-
-        # calculate f1_score and accuracy
-        self.aggregated_f1_score /= num_edges
-        print("Aggregated f1 score: ", self.aggregated_f1_score)
-        global aggregated_f1
-        aggregated_f1.append(self.aggregated_f1_score)
-
-        self.aggregated_accuracy /= num_edges
-        print("Aggragated accuracy: ", self.aggregated_accuracy)
-        global aggregated_accuracies
-        aggregated_accuracies.append(self.aggregated_accuracy)
-
-        if not apply_algorithm:
-            return None
-
-        curr_state = np.concatenate(
-            (
-                self.metrics_SAC[:, 0],
-                self.metrics_SAC[:, 1],
-                self.metrics_SAC[:, 2],
-                np.array([self.num_local_update]),
-            )
-        )
-        curr_state = normalize(curr_state.reshape(1, -1))[0]
-        local_updates.append(self.num_local_update)
-
+    def calculate_sac(self, curr_reward, curr_state):
         # add to experiment buffer
         if self.pre_state is not None:
             self.agent.train_on_transition(
@@ -335,9 +264,173 @@ class Server:
         self.pre_state = curr_state
         # predict next action
         action = self.agent.get_next_action(curr_state, False)
-        # Keep the number of local update if no algorithm is applied
-        self.pre_action = action
 
+        self.pre_action = action
+        return action
+
+    def calculate_dql_epsilon(self, curr_reward, curr_state):
+        # add to experiment buffer
+        if self.pre_state is not None:
+            self.agent.step(self.pre_state, self.pre_action, curr_reward, curr_state)
+        self.pre_state = curr_state
+
+        # predict next action
+        action = self.agent.act(curr_state, self.epsilon)
+        self.epsilon = max(self.epsilon * self.epsilon_decay, self.epsilon_min)
+
+        self.pre_action = action
+        return action
+
+    def calculate_dql_ucb1(self, curr_reward, curr_state):
+        # update ucb1
+        if self.pre_action_ucb1 is not None:
+            self.ucb1.update(self.pre_action_ucb1, curr_reward)
+
+        # add to experiment buffer
+        if self.pre_state is not None:
+            self.agent.step(self.pre_state, self.pre_action, curr_reward, curr_state)
+        self.pre_state = curr_state
+
+        # predict next action
+        action_ucb1 = self.ucb1.select_arm()
+        self.pre_action_ucb1 = action_ucb1
+
+        # action mapping: 0 -> random, 1 -> deep q-learning
+        if action_ucb1 == 0:
+            action = random.choice(np.arange(3))
+        else:
+            action = self.agent.act(curr_state)
+
+        self.pre_action = action
+        return action
+
+    def calculate_dql_softmax(self, curr_reward, curr_state):
+        # add to experiment buffer
+        if self.pre_state is not None:
+            self.agent.step(self.pre_state, self.pre_action, curr_reward, curr_state)
+        self.pre_state = curr_state
+
+        # predict next action
+        action = self.agent.act(curr_state)
+
+        self.pre_action = action
+        return action
+
+    def calculate_ddpg_epsilon(self, curr_reward, curr_state):
+        # add to experiment buffer
+        BATCH_SIZE = 64
+        if self.pre_state is not None:
+            self.agent.memory.push(
+                self.pre_state, self.pre_action, curr_reward, curr_state
+            )
+        self.pre_state = curr_state
+
+        # predict next action
+        if np.random.random() > self.epsilon:
+            action = self.agent.get_action(curr_state)
+        else:
+            action = random.uniform(-1, 1)
+
+        self.epsilon = max(self.epsilon * self.epsilon_decay, self.epsilon_min)
+        self.pre_action = np.array([action])
+        if len(self.agent.memory) > BATCH_SIZE:
+            self.agent.update(BATCH_SIZE)
+        return action
+
+    def calculate_ddpg_ucb1(self, curr_reward, curr_state):
+        # add to experiment buffer
+        BATCH_SIZE = 64
+        if self.pre_state is not None:
+            self.agent.memory.push(
+                self.pre_state, self.pre_action, curr_reward, curr_state
+            )
+        self.pre_state = curr_state
+
+        # predict next action
+        action_ucb1 = self.ucb1.select_arm()
+        self.pre_action_ucb1 = action_ucb1
+
+        # action mapping: 0 -> random, 1 -> ddpg
+        if action_ucb1 == 0:
+            action = random.uniform(-1, 1)
+        else:
+            action = self.agent.get_action(curr_state)
+
+        self.pre_action = np.array([action])
+
+        if len(self.agent.memory) > BATCH_SIZE:
+            self.agent.update(BATCH_SIZE)
+
+        return action
+
+    def calculate_ppo(self, curr_reward, curr_state):
+        # add to experiment buffer
+        BATCH_SIZE = 2
+        if self.pre_state is not None:
+            self.agent.memory.push(
+                self.pre_state,
+                self.pre_action,
+                self.pre_log_prob,
+                curr_reward,
+                curr_state,
+            )
+        self.pre_state = curr_state
+
+        # predict next action
+        action, log_prob, _ = self.agent.choose_action(curr_state)
+        self.pre_action = action
+        self.pre_log_prob = log_prob
+
+        if len(self.agent.memory) > BATCH_SIZE:
+            self.agent.learn(BATCH_SIZE)
+
+        return action
+
+    def calculate_local_updates(self, num_edges, algorithm):
+        self.metrics = np.array(self.metrics)
+        # calculate test_loss and reward
+        total_example, total_loss = 0, 0
+        for i in self.metrics:
+            total_example += i[2]
+            total_loss += i[0] * i[2]
+        loss = total_loss / total_example
+        curr_reward = -(loss + self.num_local_update * self.alpha)
+        rewards.append(curr_reward)
+        test_losses.append(loss)
+
+        self.aggregated_accuracy /= total_example
+        print("Aggragated accuracy: ", self.aggregated_accuracy)
+        global aggregated_accuracies
+        aggregated_accuracies.append(self.aggregated_accuracy)
+
+        if algorithm == "none":
+            return None
+
+        curr_state = np.concatenate(
+            (
+                self.metrics[:, 0],
+                self.metrics[:, 1],
+                self.metrics[:, 2],
+                np.array([self.num_local_update]),
+            )
+        )
+        curr_state = normalize(curr_state.reshape(1, -1))[0]
+        local_updates.append(self.num_local_update)
+        action = 1
+        if algorithm == "sac":
+            action = self.calculate_sac(curr_reward, curr_state)
+        elif algorithm == "dql_epsilon":
+            action = self.calculate_dql_epsilon(curr_reward, curr_state)
+        elif algorithm == "dql_ucb1":
+            action = self.calculate_dql_ucb1(curr_reward, curr_state)
+        elif algorithm == "dql_softmax":
+            action = self.calculate_dql_softmax(curr_reward, curr_state)
+        elif algorithm == "ddpg_epsilon":
+            action = self.calculate_ddpg_epsilon(curr_reward, curr_state)
+        elif algorithm == "ddpg_ucb1":
+            action = self.calculate_ddpg_ucb1(curr_reward, curr_state)
+        else:
+            action = self.calculate_ppo(curr_reward, curr_state)
         # action mapping: 0 -> -1, 1 -> 0, 2 -> 1
         if action == 0:
             self.num_local_update -= 1
@@ -358,17 +451,15 @@ class Server:
         global rewards
         global global_accuracies
         global aggregated_accuracies
-        global global_f1
-        global aggregated_f1
 
         # Declare storage file
         this_dir = Path.cwd()
-        algorithm = "SAC" if args.apply_algorithm else "FedAvg"
+        algorithm = args.algorithm
         current_time = datetime.now().strftime("%b%d_%H-%M-%S")
-        data_distribution = "iid" if args.iid else "non-iid"
+        data_distribution = args.skewness if args.iid == 0 else "iid"
         FILEOUT = (
             f"local-update-{args.num_local_update}_edgeagg-{args.num_edge_aggregation}"
-            f"_{data_distribution}_alpha-{self.alpha}_balance-{args.balance}"
+            f"_{data_distribution}_alpha-{self.alpha}"
         )
 
         output_dir = this_dir / "runs" / algorithm / f"{FILEOUT}_{current_time}"
@@ -376,6 +467,11 @@ class Server:
             output_dir.mkdir(parents=True)
 
         # Store results to files
+        training_time_file = str(output_dir) + "/training_time.txt"
+        training_time = time.time() - start_time
+        with open(training_time_file, "w") as f:
+            f.write(f"{training_time}")
+
         test_loss_file = str(output_dir) + "/test_loss.pkl"
         test_losses = np.array(test_losses)
 
@@ -401,16 +497,6 @@ class Server:
         aggregated_accuracies = np.array(aggregated_accuracies)
         with open(aggregated_accuracy_file, "wb") as f:
             pickle.dump(aggregated_accuracies, f)
-
-        global_f1_file = str(output_dir) + "/global_f1.pkl"
-        global_f1 = np.array(global_f1)
-        with open(global_f1_file, "wb") as f:
-            pickle.dump(global_f1, f)
-
-        aggregated_f1_file = str(output_dir) + "/aggregated_f1.pkl"
-        aggregated_f1 = np.array(aggregated_f1)
-        with open(aggregated_f1_file, "wb") as f:
-            pickle.dump(aggregated_f1, f)
 
     def start(self, args):
         condition = threading.Condition()
@@ -439,6 +525,8 @@ class Server:
         with condition:
             condition.wait(timeout=5)
         # Start training
+        global start_time
+        start_time = time.time()
         for num_comm in tqdm(range(args.num_communication)):
             print(f"Communication round {num_comm}")
             print("Start sending data to all edges.")
@@ -455,19 +543,19 @@ class Server:
             print("Aggregation finished.")
 
             # Calculating the number of local updates
-            self.cal_SAC(num_edges=args.num_edges, apply_algorithm=args.apply_algorithm)
+            self.calculate_local_updates(
+                num_edges=args.num_edges,
+                algorithm=args.algorithm,
+            )
             self.refresh_cloudserver(args)
 
             # Validate model with server's test dataset
             global_nn.load_state_dict(state_dict=copy.deepcopy(self.shared_state_dict))
             global_nn.eval()
-            f1_score, global_acc = self.fast_all_clients_test(
-                self.test_loaders, global_nn, device=DEVICE, num_class=args.num_class
+            global_acc = self.fast_all_clients_test(
+                self.test_loaders, global_nn, device=DEVICE
             )
-            print("Global f1 score: ", f1_score)
             print("Global accuracy: ", global_acc)
-            global global_f1
-            global_f1.append(f1_score)
             global global_accuracies
             global_accuracies.append(global_acc)
         self.saveFile(args)
@@ -480,7 +568,44 @@ class Server:
 
 def main():
     args = args_parser()
-    server = Server(args)
+    if args.algorithm != "none":
+        state_dims = 3 * args.num_clients + 1
+        if args.algorithm == "sac":
+            agent = SAC_Agent(
+                state_dims=state_dims,
+                action_dims=3,
+                hidden_dims=64,
+                batch_size=64,
+            )
+        elif args.algorithm == "dql_epsilon" or args.algorithm == "dql_ucb1":
+            agent = DQL_Epsilon_Agent(
+                state_size=state_dims,
+                action_size=3,
+                seed=0,
+            )
+        elif args.algorithm == "dql_softmax":
+            agent = DQL_Softmax_Agent(
+                state_size=state_dims,
+                action_size=3,
+                seed=0,
+            )
+        elif args.algorithm == "ddpg_epsilon" or args.algorithm == "ddpg_ucb1":
+            agent = DDPG_Agent(
+                state_dims=state_dims,
+                action_dims=1,
+            )
+        elif args.algorithm == "ppo":
+            agent = PPO_Agent(
+                state_dims=state_dims,
+                action_dims=3,
+                hidden_dims=64,
+            )
+        else:
+            raise ValueError(f"Algorithm {args.algorithm} not implemented")
+    else:
+        agent = None
+    print("Algorithm: ", args.algorithm)
+    server = Server(agent, args)
     server.start(args)
 
 
