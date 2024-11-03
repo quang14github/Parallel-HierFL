@@ -56,7 +56,7 @@ def args_parser():
     parser.add_argument(
         "--lr",
         type=float,
-        default=0.001,
+        default=0.0001,
         help="learning rate of the Adam when trained on client",
     )
     parser.add_argument(
@@ -113,7 +113,7 @@ def args_parser():
         help="type of drl algorithm: sac, dql_epsilon, dql_ucb1, dql_softmax, ddpg_epsilon, ddpg_ucb1, ppo, none",
         type=str,
     )
-    parser.add_argument("--alpha", default=0.001, help="alpha", type=float)
+    parser.add_argument("--alpha", default=0.1, help="alpha", type=float)
     parser.add_argument("--is_server", default=0, help="is server", type=int)
     args = parser.parse_args()
     args.cuda = torch.cuda.is_available()
