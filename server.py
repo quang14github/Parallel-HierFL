@@ -459,7 +459,7 @@ class Server:
         data_distribution = args.skewness if args.iid == 0 else "iid"
         FILEOUT = (
             f"local-update-{args.num_local_update}_edgeagg-{args.num_edge_aggregation}"
-            f"_{data_distribution}_alpha-{self.alpha}"
+            f"_{data_distribution}_alpha-{self.alpha}_lr-{args.lr}"
         )
 
         output_dir = this_dir / "runs" / algorithm / f"{FILEOUT}_{current_time}"
