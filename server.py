@@ -62,7 +62,7 @@ class Server:
         # Config algorithm
         self.num_local_update = args.num_local_update
         self.min_local_update = 1
-        self.max_local_update = 200
+        self.max_local_update = 100
         self.pre_state = None
         self.pre_action = None
         self.pre_action_ucb1 = None
