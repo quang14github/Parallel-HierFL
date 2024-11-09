@@ -75,7 +75,7 @@ class Agent:
 
         action_values = torch.squeeze(action_values)
         action_probs = F.softmax(action_values, dim=0)
-        chosen_action = np.random.choice(self.action_size, p=action_probs.numpy())
+        chosen_action = np.random.choice(self.action_size, p=action_probs.cpu().numpy())
         return chosen_action
 
     def learn(self, experiences, gamma):
