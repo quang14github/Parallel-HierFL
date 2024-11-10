@@ -3,7 +3,7 @@ import torch
 
 num_communication = 1000
 num_edge_aggregation = 4
-num_local_update = 30
+num_local_update = 50
 num_clients = 6
 
 
