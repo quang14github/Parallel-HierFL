@@ -2,7 +2,7 @@ import argparse
 import torch
 
 num_communication = 1000
-num_edge_aggregation = 2
+num_edge_aggregation = 4
 num_local_update = 30
 num_clients = 6
 
@@ -113,7 +113,7 @@ def args_parser():
         help="type of drl algorithm: sac, dql_epsilon, dql_ucb1, dql_softmax, ddpg_epsilon, ddpg_ucb1, ppo, none",
         type=str,
     )
-    parser.add_argument("--alpha", default=0.1, help="alpha", type=float)
+    parser.add_argument("--alpha", default=0.01, help="alpha", type=float)
     parser.add_argument("--is_server", default=0, help="is server", type=int)
     args = parser.parse_args()
     args.cuda = torch.cuda.is_available()
