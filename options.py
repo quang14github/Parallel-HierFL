@@ -1,11 +1,11 @@
 import argparse
 import torch
 
-num_communication = 2
+num_communication = 500
 num_edge_aggregation = 2
-num_local_update = 1
+num_local_update = 50
 num_clients = 6
-skewness = "quantity"
+skewness = "label"
 
 
 def args_parser():
