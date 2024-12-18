@@ -1,10 +1,11 @@
 import argparse
 import torch
 
-num_communication = 1000
-num_edge_aggregation = 4
-num_local_update = 30
+num_communication = 2
+num_edge_aggregation = 2
+num_local_update = 1
 num_clients = 6
+skewness = "quantity"
 
 
 def args_parser():
@@ -72,7 +73,7 @@ def args_parser():
     parser.add_argument(
         "--skewness",
         type=str,
-        default="label",
+        default=skewness,
         help="type of data skewness: quantity, label, none",
     )
     parser.add_argument(

@@ -19,9 +19,7 @@ import random
 import time
 
 from tqdm import tqdm
-from models.mnist_cnn import Net as MNISTNet
 from models.gquic_cnn import Net as GQUICNet
-from models.cifar_cnn_3conv_layer import cifar_cnn_3conv
 
 from algorithms.sac.sac import Agent as SAC_Agent
 from algorithms.dql.dql_epsilon_agent import Agent as DQL_Epsilon_Agent
@@ -35,6 +33,7 @@ rewards = []
 local_updates = []
 global_accuracies = []
 aggregated_accuracies = []
+training_time = []
 start_time = None
 
 
@@ -451,6 +450,7 @@ class Server:
         global rewards
         global global_accuracies
         global aggregated_accuracies
+        global training_time
 
         # Declare storage file
         this_dir = Path.cwd()
@@ -467,10 +467,10 @@ class Server:
             output_dir.mkdir(parents=True)
 
         # Store results to files
-        training_time_file = str(output_dir) + "/training_time.txt"
-        training_time = time.time() - start_time
-        with open(training_time_file, "w") as f:
-            f.write(f"{training_time}")
+        training_time_file = str(output_dir) + "/training_time.pkl"
+        training_time = np.array(training_time)
+        with open(training_time_file, "wb") as f:
+            pickle.dump(training_time, f)
 
         test_loss_file = str(output_dir) + "/test_loss.pkl"
         test_losses = np.array(test_losses)
@@ -526,6 +526,7 @@ class Server:
             condition.wait(timeout=5)
         # Start training
         global start_time
+        global training_time
         start_time = time.time()
         for num_comm in tqdm(range(args.num_communication)):
             print(f"Communication round {num_comm}")
@@ -558,6 +559,8 @@ class Server:
             print("Global accuracy: ", global_acc)
             global global_accuracies
             global_accuracies.append(global_acc)
+            current_time = time.time()
+            training_time.append(current_time - start_time)
         self.saveFile(args)
         self.start_training = False
         with condition:

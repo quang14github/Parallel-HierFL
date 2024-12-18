@@ -263,8 +263,10 @@ def get_cifar10(dataset_root, args):
 
 
 def get_gquic(args):
-    train_dir = f"/home/bkcs/HDD/Parallel-HierFL/data/GQUIC_small/Train/GQUIC_train_{args.byte_number}.feather"
-    test_dir = f"/home/bkcs/HDD/Parallel-HierFL/data/GQUIC_small/Test/GQUIC_test_{args.byte_number}.feather"
+    # train_dir = f"/home/bkcs/HDD/Parallel-HierFL/data/GQUIC_small/Train/GQUIC_train_{args.byte_number}.feather"
+    # test_dir = f"/home/bkcs/HDD/Parallel-HierFL/data/GQUIC_small/Test/GQUIC_test_{args.byte_number}.feather"
+    train_dir = f"/Users/robert/dev/AINI/HierFL/data/GQUIC_small/Train/GQUIC_train_{args.byte_number}.feather"
+    test_dir = f"/Users/robert/dev/AINI/HierFL/data/GQUIC_small/Test/GQUIC_test_{args.byte_number}.feather"
     train = pd.read_feather(train_dir)
     test = pd.read_feather(test_dir)
     x_train, y_train = load_data_set(train, 2103, args)
