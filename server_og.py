@@ -72,9 +72,7 @@ class Server:
         self.clients.append(addr)
         self.client_conns[client_id] = conn
         self.id_registration.append(client_id)
-        self.sample_registration[client_id] = self.train_loaders[
-            client_id
-        ].dataset.__len__()
+        self.sample_registration[client_id] = len(self.train_loaders[client_id].dataset)
         return None
 
     def initialize_global_nn(self, args):
