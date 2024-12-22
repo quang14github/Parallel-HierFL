@@ -18,7 +18,7 @@ for folder in os.listdir(runs_folder):
                     # Read the data file into DataFrame
                     try:
                         with open(file_path, "rb") as f:
-                            data = pickle.load(f)
+                            data = pickle.load(f)[:300]
                         if file == "global_accuracy.pkl":
                             # print the first index when global_accuracy is greater or equal to 0.935
                             # for index, value in enumerate(data):
