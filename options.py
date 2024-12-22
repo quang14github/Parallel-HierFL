@@ -1,7 +1,7 @@
 import argparse
 import torch
 
-num_communication = 500
+num_communication = 300
 num_edge_aggregation = 10
 num_local_update = 5
 num_clients = 6

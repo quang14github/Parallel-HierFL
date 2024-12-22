@@ -393,7 +393,7 @@ class Server:
             total_example += i[2]
             total_loss += i[0] * i[2]
         loss = total_loss / total_example
-        curr_reward = -(loss + self.num_local_update * self.alpha)
+        curr_reward = -loss
         rewards.append(curr_reward)
         test_losses.append(loss)
 
@@ -432,11 +432,11 @@ class Server:
             action = self.calculate_ppo(curr_reward, curr_state)
         # action mapping: 0 -> -1, 1 -> 0, 2 -> 1
         if action == 0:
-            self.num_local_update -= 1
+            self.num_local_update -= 2
         elif action == 1:
             pass
         else:
-            self.num_local_update += 1
+            self.num_local_update += 2
         # clip the number of local update
         self.num_local_update = max(
             self.min_local_update, min(self.num_local_update, self.max_local_update)
