@@ -2,8 +2,8 @@ import argparse
 import torch
 
 num_communication = 300
-num_edge_aggregation = 5
-num_local_update = 10
+num_edge_aggregation = 2
+num_local_update = 25
 num_clients = 6
 skewness = "label"
 
