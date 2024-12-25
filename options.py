@@ -3,9 +3,9 @@ import torch
 
 num_communication = 300
 num_edge_aggregation = 2
-num_local_update = 25
+num_local_update = 50
 num_clients = 6
-skewness = "label"
+skewness = "quantity"
 
 
 def args_parser():
@@ -67,7 +67,7 @@ def args_parser():
     parser.add_argument(
         "--iid",
         type=int,
-        default=1,
+        default=0,
         help="distribution of the data among clients, 0 (non-iid), 1 (iid)",
     )
     parser.add_argument(
