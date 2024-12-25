@@ -462,7 +462,7 @@ class Server:
             f"_{data_distribution}_alpha-{self.alpha}_lr-{args.lr}"
         )
 
-        output_dir = this_dir / "runs" / algorithm / f"{FILEOUT}_{current_time}"
+        output_dir = this_dir / "runs" / data_distribution / algorithm / f"{FILEOUT}_{current_time}"
         if not output_dir.exists():
             output_dir.mkdir(parents=True)
 
