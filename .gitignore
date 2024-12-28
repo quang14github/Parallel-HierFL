@@ -4,3 +4,4 @@ data/
 *.png
 legacy/
 *.xlsx
+process_result.py

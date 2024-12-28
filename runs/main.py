@@ -20,11 +20,6 @@ for folder in os.listdir(runs_folder):
                         with open(file_path, "rb") as f:
                             data = pickle.load(f)[:300]
                         if file == "global_accuracy.pkl":
-                            # print the first index when global_accuracy is greater or equal to 0.935
-                            # for index, value in enumerate(data):
-                            #     if value >= 0.935:
-                            #         idx = index
-                            #         break
                             print(max(data))
                     except Exception as e:
                         print(f"Could not read {file_path}: {e}")
