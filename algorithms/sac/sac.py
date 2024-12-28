@@ -7,7 +7,7 @@ from .replay_buffer import Memory
 
 class Agent:
     ALPHA_INITIAL = 1.0
-    REPLAY_BUFFER_MAX_SIZE = 1000
+    REPLAY_BUFFER_MAX_SIZE = 5000
     DISCOUNT_RATE = 0.99
     LEARNING_RATE = 1e-3
     SOFT_UPDATE_INTERPOLATION_FACTOR = 0.01

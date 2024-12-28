@@ -5,7 +5,7 @@ import pickle
 report_data = []
 baseline = 0.926488457
 # Iterate through directories and files
-for root, dirs, files in os.walk("runs/niid"):
+for root, dirs, files in os.walk("runs/label"):
     if (
         "global_accuracy.pkl" in files
         # and "local_update.pkl" in files
@@ -66,6 +66,6 @@ for root, dirs, files in os.walk("runs/niid"):
 
 # Create a DataFrame from the report data
 report_df = pd.DataFrame(report_data)
-
+print(report_df)
 # to excel file
-report_df.to_excel("niid_report.xlsx", index=False)
+# report_df.to_excel("niid_report.xlsx", index=False)
