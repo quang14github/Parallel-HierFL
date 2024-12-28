@@ -67,7 +67,7 @@ def args_parser():
     parser.add_argument(
         "--iid",
         type=int,
-        default=1,
+        default=0,
         help="distribution of the data among clients, 0 (non-iid), 1 (iid)",
     )
     parser.add_argument(
