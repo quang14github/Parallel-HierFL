@@ -5,7 +5,7 @@ num_communication = 300
 num_edge_aggregation = 2
 num_local_update = 25
 num_clients = 6
-skewness = "quantity"
+skewness = "label"
 
 
 def args_parser():
