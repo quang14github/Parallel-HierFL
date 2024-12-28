@@ -13,7 +13,7 @@ class Agent:
         gamma=0.99,
         epsilon=0.2,
         epochs=10,
-        max_memory_size=5000,
+        max_memory_size=10000,
     ):
         self.policy_network = PolicyNetwork(state_dims, hidden_dims, action_dims)
         self.value_network = ValueNetwork(state_dims, hidden_dims)
