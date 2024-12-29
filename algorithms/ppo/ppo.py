@@ -9,7 +9,7 @@ class Agent:
         state_dims,
         hidden_dims,
         action_dims,
-        learning_rate=1e-3,
+        learning_rate=1e-4,
         gamma=0.99,
         epsilon=0.2,
         epochs=10,
